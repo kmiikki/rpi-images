@@ -1,0 +1,13 @@
+rpicam-apps
+python3-picamera2
+python3-libcamera
+v4l-utils
+qt6-wayland
+i2c-tools
+python3-serial
+python3-smbus2
+python3-rpi.gpio
+python3-libgpiod
+gpiod
+spyder
+python3-spyder-kernels

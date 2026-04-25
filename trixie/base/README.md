@@ -1,22 +1,30 @@
-# lab-install README
+# Trixie Base (lab-install)
 
-## Purpose
-
-This package creates and removes a standard laboratory Python environment called `lab314`.
-
-Goals:
-
-* one common environment for researchers
-* Python 3.14
-* Spyder stays outside the environment
-* only `spyder-kernels` is installed into the environment
-* `/opt/lab/bin` is first in PATH
-* Raspberry Pi automatically activates `lab314`
-* Ubuntu does not autoactivate `lab314`
+This profile provides a reproducible laboratory environment for Raspberry Pi OS (Debian Trixie).
 
 ---
 
-# Directory Structure
+## Purpose
+
+Creates and manages a standard Python environment:
+
+- Python 3.14
+- `lab314` environment
+- Spyder integration (external)
+- consistent toolchain for research use
+
+Key design goals:
+
+- one shared environment for users
+- stable and predictable behaviour
+- minimal user configuration
+- safe system-level tooling
+
+---
+
+## Directory Structure
+
+### Install scripts
 
 ```text
 install/
@@ -43,220 +51,197 @@ install/
 ├── run_uninstall_rpi_home.sh
 ├── run_uninstall_rpi_aalto.sh
 └── run_uninstall_ubuntu_lab314.sh
+````
+
+### Additional components
+
+```text
+base/
+├── bin/
+│   └── rpi-share
+├── config/
+│   ├── rpi-share.aalto.json
+│   └── rpi-share.home.json
+├── docs/
+│   ├── rpi-share.md
+│   └── wolfram.md
+└── install/
+    ├── install_optional_wolfram.sh
+    └── uninstall_optional_wolfram.sh
 ```
 
 ---
 
-# Raspberry Pi Home Installation
+## Installation
 
-For a normal Raspberry Pi home installation:
+### Raspberry Pi (home)
 
 ```bash
 cd install
 sudo ./run_rpi_home.sh
 ```
 
-This runs, in order:
-
-1. `pre_home.sh`
-2. `install_rpi_base.sh`
-3. `install_conda_base.sh`
-4. `create_lab314_env.sh`
-5. `enable_lab314_autoactivate_rpi.sh`
-6. `verify_rpi_lab314.sh`
-
-After installation:
-
-```bash
-exec bash -l
-```
-
-The terminal prompt should become:
-
-```text
-(lab314)
-```
-
----
-
-# Raspberry Pi Aalto Installation
-
-For an Aalto laboratory or work environment:
+### Raspberry Pi (Aalto)
 
 ```bash
 cd install
 sudo ./run_rpi_aalto.sh
 ```
 
-This is similar to the home version, but uses `pre_aalto.sh`.
-
----
-
-# Ubuntu Installation
-
-Ubuntu assumes that `micromamba` already exists.
-
-Run:
+### Ubuntu
 
 ```bash
 cd install
 ./run_ubuntu_lab314.sh
 ```
 
-This runs:
-
-1. `install_ubuntu_base.sh`
-2. `setup_lab314_ubuntu.sh`
-3. `verify_lab314_ubuntu.sh`
-
 Ubuntu does not autoactivate `lab314`.
 
-Use it manually:
-
-```bash
-micromamba activate lab314
-```
-
 ---
 
-# Installed Python Packages in lab314
+## PATH and Tools
 
-The environment contains at least:
-
-```text
-python 3.14
-spyder-kernels 3.0.5
-numpy
-pandas
-matplotlib
-scipy
-scikit-image
-opencv-python
-pillow
-imageio
-tifffile
-openpyxl
-seaborn
-pyarrow
-h5py
-ipykernel
-```
-
-On Raspberry Pi, OpenCV Qt font support is fixed automatically by creating:
-
-```text
-/opt/lab314/lib/python3.14/site-packages/cv2/qt/fonts
-```
-
-and linking DejaVu fonts there.
-
----
-
-# PATH
-
-The following directory is added to the beginning of PATH:
+The following directory is added to PATH:
 
 ```text
 /opt/lab/bin
 ```
 
-Place your own scripts there if you want them globally available.
+This is the standard location for user-facing tools.
 
-Examples:
+---
+
+## rpi-share (Network Access)
+
+`rpi-share` provides safe access to network storage.
+
+### Features
+
+* session-based mounts
+* supports:
+
+  * sshfs (Aalto)
+  * cifs (NAS)
+  * browse (GUI)
+* no stored passwords
+* safe unmount behaviour
+
+### Lifecycle
 
 ```text
-/opt/lab/bin/filesampler.py
-/opt/lab/bin/csvmerge.py
+start script → mount
+exit script  → unmount
 ```
 
-Larger projects should have their own directories under:
+### Safe Unmount Policy
+
+The tool intentionally avoids:
 
 ```text
-/opt/lab/apps
+umount -l
+umount -f
 ```
 
-Example:
+Reason:
+
+> Forced or lazy unmount may freeze the system when GUI applications (e.g. Nemo) use CIFS mounts.
+
+Behaviour:
+
+* normal unmount is attempted
+* if busy → user closes applications
+* retry loop continues until safe
+
+### Configuration
 
 ```text
-/opt/lab/apps/dpslogger
+rpi-share.json
+```
+
+Resolution order:
+
+1. working directory
+2. `~/.config/rpi-share.json`
+3. script directory
+
+See:
+
+```text
+docs/rpi-share.md
 ```
 
 ---
 
-# Uninstall
+## Sudo Policy
 
-## Raspberry Pi
+Passwordless sudo is enabled for the invoking user.
 
-Remove only the environment and conda:
-
-```bash
-sudo ./run_uninstall_rpi_home.sh
+```text
+/etc/sudoers.d/010_<user>-nopasswd
 ```
 
-or
+Verify:
 
 ```bash
-sudo ./run_uninstall_rpi_aalto.sh
-```
-
-Remove also apt packages:
-
-```bash
-sudo ./run_uninstall_rpi_home.sh --remove-apt
-```
-
-Remove everything including `/opt/lab`:
-
-```bash
-sudo ./run_uninstall_rpi_home.sh --remove-apt --purge
+sudo -n true
 ```
 
 ---
 
-## Ubuntu
+## Optional Wolfram Engine
+
+Not installed by default.
+
+Install:
 
 ```bash
-./run_uninstall_ubuntu_lab314.sh
+cd install
+sudo ./install_optional_wolfram.sh
 ```
 
-Optional:
+Uninstall:
 
 ```bash
-./run_uninstall_ubuntu_lab314.sh --remove-apt --purge
+cd install
+sudo ./uninstall_optional_wolfram.sh
+```
+
+See:
+
+```text
+docs/wolfram.md
 ```
 
 ---
 
-# Logs
-
-The run scripts save logs under:
+## Logs
 
 ```text
 /opt/lab/logs
 ```
 
-Examples:
-
-```text
-/opt/lab/logs/run_rpi_home_20260406-183000.log
-/opt/lab/logs/run_ubuntu_lab314_20260406-184500.log
-```
-
 ---
 
-# Recommended Test After Installation
+## Test
 
 ```bash
 python - <<'EOF'
-import numpy, pandas, matplotlib, scipy, skimage, cv2, spyder_kernels
-print("Everything OK")
+import numpy, pandas, matplotlib, scipy, skimage, cv2
+print("Environment OK")
 EOF
 ```
 
-Then test in Spyder by selecting:
+Spyder interpreter:
 
 ```text
 /opt/lab314/bin/python
 ```
 
-as the interpreter.
+---
+
+## Design Principles
+
+* no hidden automation
+* no stored credentials
+* user-controlled workflows
+* stable over clever

@@ -1,0 +1,38 @@
+{
+  "version": "1.0",
+
+  "defaults": {
+    "gateway": "viila",
+    "share": "teamwork-t100"
+  },
+
+  "gateways": {
+    "viila": {
+      "host": "viila.org.aalto.fi",
+      "description": "Aalto staff gateway (preferred)",
+      "allowed_groups": ["staff"],
+      "default_user": ""
+    },
+    "kosh": {
+      "host": "kosh.org.aalto.fi",
+      "description": "Aalto student + staff gateway",
+      "allowed_groups": ["staff", "students"],
+      "default_user": ""
+    }
+  },
+
+  "shares": {
+    "teamwork-t100": {
+      "mount_type": "sshfs",
+      "remote_path": "/m/teamwork/t100",
+      "description": "Teamwork CHEM (t100)",
+      "allowed_groups": ["staff", "students"]
+    },
+    "work-t100": {
+      "mount_type": "sshfs",
+      "remote_path": "/m/work/t100",
+      "description": "Work CHEM (t100)",
+      "allowed_groups": ["staff", "students"]
+    }
+  }
+}

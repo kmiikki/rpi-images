@@ -1,0 +1,788 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+PROGRAM="rpi-share"
+CONFIG_NAME="rpi-share.json"
+BASE_MOUNT_DIR="/media/rpi-share"
+MANAGED_MARKER=".rpi-share-managed"
+
+CONFIG_FILE=""
+GATEWAY=""
+SHARE=""
+REMOTE_USER=""
+
+OPEN_FILE_MANAGER=0
+CLEANUP_ONLY=0
+REMOVE_DIRS=0
+LIST_ONLY=0
+STATUS_ONLY=0
+CHECK_ONLY=0
+
+TARGET_MP=""
+MOUNTED_BY_THIS_SCRIPT=0
+CRED_FILE=""
+
+die() {
+    echo "Error: $*" >&2
+    exit 1
+}
+
+usage() {
+    cat <<EOF
+Usage:
+  $PROGRAM
+  $PROGRAM -g GATEWAY -s SHARE
+  $PROGRAM -g GATEWAY -s SHARE -u USER
+  $PROGRAM --cleanup
+  $PROGRAM --cleanup --remove-dirs
+  $PROGRAM --list
+  $PROGRAM --status
+  $PROGRAM --check
+
+Options:
+  -g, --gateway NAME     Gateway name from JSON, e.g. viila, kosh, nasse
+  -s, --share NAME       Share name from JSON, e.g. teamwork-t100, work-t100, root, code
+  -u, --user USER        Remote username for sshfs/cifs
+  --cleanup              Unmount all known rpi-share mappings and exit
+  --remove-dirs          Remove empty managed mountpoint directories, including base dir if possible
+  --list                 List configured gateways and shares
+  --status               Show active known mounts
+  --check                Check dependencies
+  --open                 Open file manager after successful mount/browse
+  --config FILE          Use explicit config file
+  -h, --help             Show this help
+
+Config resolution:
+  1. ./rpi-share.json
+  2. ~/.config/rpi-share.json
+  3. script_dir/rpi-share.json
+EOF
+}
+
+need_cmd() {
+    command -v "$1" >/dev/null 2>&1 || die "required command not found: $1"
+}
+
+resolve_config() {
+    if [[ -n "$CONFIG_FILE" ]]; then
+        [[ -f "$CONFIG_FILE" ]] || die "config file not found: $CONFIG_FILE"
+        echo "$CONFIG_FILE"
+        return
+    fi
+
+    local script_dir
+    script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+    local candidates=(
+        "$PWD/$CONFIG_NAME"
+        "$HOME/.config/$CONFIG_NAME"
+        "$script_dir/$CONFIG_NAME"
+    )
+
+    local f
+    for f in "${candidates[@]}"; do
+        if [[ -f "$f" ]]; then
+            echo "$f"
+            return
+        fi
+    done
+
+    die "no $CONFIG_NAME found"
+}
+
+json_get() {
+    jq -r "$1" "$CONFIG_FILE"
+}
+
+json_exists() {
+    jq -e "$1" "$CONFIG_FILE" >/dev/null
+}
+
+groups_text() {
+    jq -r "$1 | join(\", \")" "$CONFIG_FILE"
+}
+
+mountpoint_for() {
+    local gw="$1"
+    local sh="$2"
+    echo "$BASE_MOUNT_DIR/$gw/$sh"
+}
+
+mount_type_for() {
+    local sh="$1"
+    json_get ".shares[\"$sh\"].mount_type"
+}
+
+remote_display_for() {
+    local gw="$1"
+    local sh="$2"
+
+    local host remote_path mount_type browse_url
+    host="$(json_get ".gateways[\"$gw\"].host")"
+    remote_path="$(json_get ".shares[\"$sh\"].remote_path // \"\"")"
+    mount_type="$(mount_type_for "$sh")"
+
+    case "$mount_type" in
+        sshfs)
+            echo "$host:$remote_path"
+            ;;
+        cifs)
+            echo "//$host$remote_path"
+            ;;
+        browse)
+            browse_url="$(json_get ".shares[\"$sh\"].browse_url // \"\"")"
+            if [[ -n "$browse_url" && "$browse_url" != "null" ]]; then
+                echo "$browse_url"
+            else
+                echo "smb://$host/"
+            fi
+            ;;
+        *)
+            echo "$host:$remote_path"
+            ;;
+    esac
+}
+
+print_mapping() {
+    local gw="$1"
+    local sh="$2"
+
+    local host gw_desc sh_desc gw_groups sh_groups mount_type remote mp
+    host="$(json_get ".gateways[\"$gw\"].host")"
+    gw_desc="$(json_get ".gateways[\"$gw\"].description // \"\"")"
+    sh_desc="$(json_get ".shares[\"$sh\"].description // \"\"")"
+    gw_groups="$(groups_text ".gateways[\"$gw\"].allowed_groups")"
+    sh_groups="$(groups_text ".shares[\"$sh\"].allowed_groups")"
+    mount_type="$(mount_type_for "$sh")"
+    remote="$(remote_display_for "$gw" "$sh")"
+    mp="$(mountpoint_for "$gw" "$sh")"
+
+    echo
+    echo "Selected mapping:"
+    echo
+    echo "  Gateway        : $gw"
+    echo "  Gateway host   : $host"
+    [[ -n "$gw_desc" && "$gw_desc" != "null" ]] && echo "  Gateway note   : $gw_desc"
+    echo "  Gateway access : $gw_groups"
+    echo
+    echo "  Share          : $sh"
+    [[ -n "$sh_desc" && "$sh_desc" != "null" ]] && echo "  Share note     : $sh_desc"
+    echo "  Share access   : $sh_groups"
+    echo
+    echo "  Mount type     : $mount_type"
+    echo "  Remote path    : $remote"
+
+    if [[ "$mount_type" != "browse" ]]; then
+        echo "  Local mount    : $mp"
+    fi
+
+    echo
+}
+
+check_dependencies() {
+    echo "Checking dependencies:"
+    echo
+
+    local fatal=0
+
+    for cmd in jq mountpoint mount umount sudo timeout; do
+        if command -v "$cmd" >/dev/null 2>&1; then
+            echo "  OK: $cmd"
+        else
+            echo "  MISSING: $cmd"
+            fatal=1
+        fi
+    done
+
+    if command -v sshfs >/dev/null 2>&1; then
+        echo "  OK: sshfs"
+    else
+        echo "  WARN: sshfs not found, sshfs shares will not work"
+    fi
+
+    if command -v mount.cifs >/dev/null 2>&1; then
+        echo "  OK: mount.cifs"
+    else
+        echo "  WARN: mount.cifs not found, cifs shares will not work"
+    fi
+
+    if command -v nemo >/dev/null 2>&1; then
+        echo "  OK: nemo"
+    elif command -v xdg-open >/dev/null 2>&1; then
+        echo "  OK: xdg-open"
+    else
+        echo "  WARN: no file manager opener found"
+    fi
+
+    echo
+
+    [[ "$fatal" -eq 0 ]] || die "missing required base dependencies"
+}
+
+validate_config() {
+    json_exists '.version' || die "config missing: version"
+    json_exists '.defaults.gateway' || die "config missing: defaults.gateway"
+    json_exists '.defaults.share' || die "config missing: defaults.share"
+    json_exists '.gateways' || die "config missing: gateways"
+    json_exists '.shares' || die "config missing: shares"
+}
+
+validate_selection() {
+    local gw="$1"
+    local sh="$2"
+
+    json_exists ".gateways[\"$gw\"]" || die "unknown gateway: $gw"
+    json_exists ".shares[\"$sh\"]" || die "unknown share: $sh"
+
+    local mount_type
+    mount_type="$(mount_type_for "$sh")"
+
+    case "$mount_type" in
+        sshfs|cifs|browse)
+            ;;
+        *)
+            die "unsupported mount_type for share '$sh': $mount_type"
+            ;;
+    esac
+}
+
+list_config() {
+    echo "Using config: $CONFIG_FILE"
+    echo
+
+    echo "Gateways:"
+    jq -r '.gateways | to_entries[] |
+        "  \(.key)\n    Host   : \(.value.host)\n    Access : \(.value.allowed_groups | join(", "))\n"' "$CONFIG_FILE"
+
+    echo "Shares:"
+    jq -r '.shares | to_entries[] |
+        "  \(.key)\n    Type        : \(.value.mount_type)\n    Remote path : \(.value.remote_path // "-")\n    Access      : \(.value.allowed_groups | join(", "))\n"' "$CONFIG_FILE"
+}
+
+status_known_mounts() {
+    echo "Active known rpi-share mounts:"
+    echo
+
+    local found=0
+
+    while IFS=$'\t' read -r gw sh; do
+        local mp
+        mp="$(mountpoint_for "$gw" "$sh")"
+
+        if mountpoint -q "$mp"; then
+            echo "  $gw/$sh -> $mp"
+            found=1
+        fi
+    done < <(
+        jq -r '.gateways | keys[]' "$CONFIG_FILE" | while read -r gw; do
+            jq -r '.shares | keys[]' "$CONFIG_FILE" | while read -r sh; do
+                printf "%s\t%s\n" "$gw" "$sh"
+            done
+        done
+    )
+
+    [[ "$found" -eq 1 ]] || echo "  No active known mounts."
+}
+
+ensure_base_dir() {
+    if [[ ! -d "$BASE_MOUNT_DIR" ]]; then
+        sudo mkdir -p "$BASE_MOUNT_DIR"
+        sudo touch "$BASE_MOUNT_DIR/$MANAGED_MARKER"
+    fi
+}
+
+prune_base_dir_if_managed() {
+    if [[ ! -d "$BASE_MOUNT_DIR" ]]; then
+        return 0
+    fi
+
+    if [[ ! -f "$BASE_MOUNT_DIR/$MANAGED_MARKER" ]]; then
+        return 0
+    fi
+
+    local count
+    count="$(find "$BASE_MOUNT_DIR" -mindepth 1 -maxdepth 1 ! -name "$MANAGED_MARKER" 2>/dev/null | wc -l)"
+
+    if [[ "$count" -eq 0 ]]; then
+        echo "  Removing managed base dir: $BASE_MOUNT_DIR"
+        sudo rm -f "$BASE_MOUNT_DIR/$MANAGED_MARKER"
+        sudo rmdir "$BASE_MOUNT_DIR" 2>/dev/null || true
+    else
+        echo "  Base dir not empty, not removing: $BASE_MOUNT_DIR"
+    fi
+}
+
+prune_mount_dirs() {
+    local mp="$1"
+    local gw_dir
+
+    gw_dir="$(dirname "$mp")"
+
+    if mountpoint -q "$mp"; then
+        return 0
+    fi
+
+    if [[ -d "$mp" && -z "$(ls -A "$mp" 2>/dev/null)" ]]; then
+        sudo rmdir "$mp" 2>/dev/null || true
+    fi
+
+    if [[ -d "$gw_dir" && -z "$(ls -A "$gw_dir" 2>/dev/null)" ]]; then
+        sudo rmdir "$gw_dir" 2>/dev/null || true
+    fi
+
+    prune_base_dir_if_managed
+}
+
+safe_unmount() {
+    local mp="$1"
+    local answer=""
+
+    if ! mountpoint -q "$mp"; then
+        prune_mount_dirs "$mp"
+        return 0
+    fi
+
+    while mountpoint -q "$mp"; do
+        echo
+        echo "Trying to disconnect network mapping:"
+        echo "  $mp"
+
+        # SSHFS (FUSE)
+        if command -v fusermount3 >/dev/null 2>&1; then
+            if timeout 5 fusermount3 -u "$mp" 2>/dev/null; then
+                echo "  Disconnected."
+                prune_mount_dirs "$mp"
+                return 0
+            fi
+        fi
+
+        # CIFS / general
+        if timeout 5 sudo umount "$mp"; then
+            echo "  Disconnected."
+            prune_mount_dirs "$mp"
+            return 0
+        fi
+
+        echo
+        echo "Cannot disconnect this network mapping because it is still in use:"
+        echo "  $mp"
+        echo
+        echo "Close all programs using it:"
+        echo "  - Nemo/Nautilus"
+        echo "  - terminals inside the mount"
+        echo "  - editors/viewers"
+        echo
+        echo "Press Enter to try again, or q to quit."
+        echo
+
+        read -rp "Retry? [Enter/q]: " answer
+
+        if [[ "$answer" =~ ^[Qq]$ ]]; then
+            echo
+            echo "Leaving mapping mounted:"
+            echo "  $mp"
+            echo
+            echo "Why:"
+            echo "  Forced disconnect (lazy/force) may freeze the system"
+            echo "  when GUI apps are using the share."
+            echo
+            echo "Try later:"
+            echo "  $PROGRAM --cleanup --remove-dirs"
+            echo
+            echo "If it still fails:"
+            echo "  1. Close all apps using the share"
+            echo "  2. cd ~"
+            echo "  3. Run cleanup again"
+            echo
+            echo "Last resort (RPi safe):"
+            echo "  reboot"
+            return 1
+        fi
+    done
+
+    prune_mount_dirs "$mp"
+}
+
+cleanup_all_known() {
+    echo "Cleanup all known rpi-share mappings:"
+    echo
+
+    while IFS=$'\t' read -r gw sh; do
+        safe_unmount "$(mountpoint_for "$gw" "$sh")" || true
+    done < <(
+        jq -r '.gateways | keys[]' "$CONFIG_FILE" | while read -r gw; do
+            jq -r '.shares | keys[]' "$CONFIG_FILE" | while read -r sh; do
+                printf "%s\t%s\n" "$gw" "$sh"
+            done
+        done
+    )
+
+    if [[ "$REMOVE_DIRS" -eq 1 ]]; then
+        echo
+        echo "Pruning directory tree..."
+
+        while IFS=$'\t' read -r gw sh; do
+            prune_mount_dirs "$(mountpoint_for "$gw" "$sh")"
+        done < <(
+            jq -r '.gateways | keys[]' "$CONFIG_FILE" | while read -r gw; do
+                jq -r '.shares | keys[]' "$CONFIG_FILE" | while read -r sh; do
+                    printf "%s\t%s\n" "$gw" "$sh"
+                done
+            done
+        )
+
+        prune_base_dir_if_managed
+    fi
+
+    echo
+    echo "Cleanup done."
+}
+
+cleanup_current_session() {
+    set +e
+
+    if [[ "$MOUNTED_BY_THIS_SCRIPT" -eq 1 && -n "$TARGET_MP" ]]; then
+        echo
+        echo "Disconnecting current mapping:"
+        echo "  $TARGET_MP"
+        safe_unmount "$TARGET_MP" || true
+    elif [[ -n "$TARGET_MP" && "$REMOVE_DIRS" -eq 1 ]]; then
+        prune_mount_dirs "$TARGET_MP"
+    fi
+
+    if [[ -n "${CRED_FILE:-}" && -f "$CRED_FILE" ]]; then
+        shred -u "$CRED_FILE" 2>/dev/null || rm -f "$CRED_FILE"
+    fi
+}
+
+interactive_select() {
+    local default_gw default_sh answer
+
+    default_gw="$(json_get '.defaults.gateway')"
+    default_sh="$(json_get '.defaults.share')"
+
+    echo "Using config: $CONFIG_FILE"
+    print_mapping "$default_gw" "$default_sh"
+
+    echo "Access note:"
+    echo "  Check the gateway/share access above."
+    echo "  If this is not suitable, choose another gateway or share."
+    echo
+
+    read -rp "Use this default mapping? [Y/n]: " answer
+    answer="${answer:-Y}"
+
+    if [[ "$answer" =~ ^[Yy]$ ]]; then
+        GATEWAY="$default_gw"
+        SHARE="$default_sh"
+        return
+    fi
+
+    echo
+    echo "Available gateways:"
+    jq -r '.gateways | to_entries[] |
+        "  \(.key)\n    Host   : \(.value.host)\n    Access : \(.value.allowed_groups | join(", "))\n"' "$CONFIG_FILE"
+
+    read -rp "Gateway: " GATEWAY
+    [[ -n "$GATEWAY" ]] || die "gateway cannot be empty"
+
+    echo
+    echo "Available shares:"
+    jq -r '.shares | to_entries[] |
+        "  \(.key)\n    Type        : \(.value.mount_type)\n    Remote path : \(.value.remote_path // "-")\n    Access      : \(.value.allowed_groups | join(", "))\n"' "$CONFIG_FILE"
+
+    read -rp "Share: " SHARE
+    [[ -n "$SHARE" ]] || die "share cannot be empty"
+}
+
+open_path_or_url() {
+    local target="$1"
+
+    if command -v nemo >/dev/null 2>&1; then
+        nemo "$target" >/dev/null 2>&1 &
+    elif command -v xdg-open >/dev/null 2>&1; then
+        xdg-open "$target" >/dev/null 2>&1 &
+    else
+        echo "No supported file manager opener found."
+        echo "Open manually:"
+        echo "  $target"
+    fi
+}
+
+prompt_remote_user_if_needed() {
+    if [[ -n "$REMOTE_USER" ]]; then
+        return
+    fi
+
+    local default_user
+    default_user="$(json_get ".gateways[\"$GATEWAY\"].default_user // \"\"")"
+
+    if [[ -n "$default_user" && "$default_user" != "null" ]]; then
+        read -rp "Remote username [$default_user]: " REMOTE_USER
+        REMOTE_USER="${REMOTE_USER:-$default_user}"
+    else
+        read -rp "Remote username: " REMOTE_USER
+    fi
+
+    [[ -n "$REMOTE_USER" ]] || die "remote username cannot be empty"
+}
+
+mount_browse() {
+    local gw="$1"
+    local sh="$2"
+
+    local url
+    url="$(json_get ".shares[\"$sh\"].browse_url // \"\"")"
+
+    if [[ -z "$url" || "$url" == "null" ]]; then
+        local host
+        host="$(json_get ".gateways[\"$gw\"].host")"
+        url="smb://$host/"
+    fi
+
+    echo
+    echo "Opening browse view:"
+    echo "  $url"
+    echo
+
+    open_path_or_url "$url"
+}
+
+mount_sshfs() {
+    local gw="$1"
+    local sh="$2"
+
+    command -v sshfs >/dev/null 2>&1 || die "sshfs not installed"
+
+    local host remote_path remote
+    host="$(json_get ".gateways[\"$gw\"].host")"
+    remote_path="$(json_get ".shares[\"$sh\"].remote_path")"
+
+    prompt_remote_user_if_needed
+
+    remote="${REMOTE_USER}@${host}:${remote_path}"
+
+    echo
+    echo "Mounting with sshfs:"
+    echo "  $remote -> $TARGET_MP"
+    echo
+    echo "SSH will handle authentication."
+    echo "If SSH keys are configured, no password is needed."
+    echo
+
+    sshfs "$remote" "$TARGET_MP" \
+        -o reconnect,ServerAliveInterval=15,ServerAliveCountMax=3
+
+    MOUNTED_BY_THIS_SCRIPT=1
+}
+
+mount_cifs() {
+    local gw="$1"
+    local sh="$2"
+
+    command -v mount.cifs >/dev/null 2>&1 || die "mount.cifs not installed; install cifs-utils"
+
+    local host remote_path remote options password uid gid
+    host="$(json_get ".gateways[\"$gw\"].host")"
+    remote_path="$(json_get ".shares[\"$sh\"].remote_path")"
+    remote="//$host$remote_path"
+    options="$(json_get ".shares[\"$sh\"].cifs_options // \"iocharset=utf8,vers=3.0,noserverino\"")"
+
+    prompt_remote_user_if_needed
+
+    read -rsp "Password: " password
+    echo
+    [[ -n "$password" ]] || die "password cannot be empty"
+
+    CRED_FILE="$(mktemp)"
+    chmod 600 "$CRED_FILE"
+
+    cat > "$CRED_FILE" <<EOF
+username=$REMOTE_USER
+password=$password
+EOF
+
+    local domain
+    domain="$(json_get ".gateways[\"$gw\"].domain // \"\"")"
+    if [[ -n "$domain" && "$domain" != "null" ]]; then
+        echo "domain=$domain" >> "$CRED_FILE"
+    fi
+
+    uid="$(id -u)"
+    gid="$(id -g)"
+
+    echo
+    echo "Mounting with cifs:"
+    echo "  $remote -> $TARGET_MP"
+
+    sudo mount -t cifs "$remote" "$TARGET_MP" \
+        -o "credentials=$CRED_FILE,uid=$uid,gid=$gid,file_mode=0600,dir_mode=0700,$options"
+
+    MOUNTED_BY_THIS_SCRIPT=1
+}
+
+mount_mapping() {
+    local gw="$1"
+    local sh="$2"
+    local mount_type
+
+    TARGET_MP="$(mountpoint_for "$gw" "$sh")"
+    mount_type="$(mount_type_for "$sh")"
+
+    print_mapping "$gw" "$sh"
+
+    if [[ "$mount_type" == "browse" ]]; then
+        mount_browse "$gw" "$sh"
+        return
+    fi
+
+    echo "Preparing mountpoint:"
+    echo "  $TARGET_MP"
+    ensure_base_dir
+    sudo mkdir -p "$TARGET_MP"
+
+    echo
+    echo "Checking existing same mapping:"
+    if mountpoint -q "$TARGET_MP"; then
+        echo "  Existing same mapping found."
+        echo "  It will be unmounted before remounting."
+        safe_unmount "$TARGET_MP" || die "cannot unmount existing mapping; it may be busy"
+        ensure_base_dir
+        sudo mkdir -p "$TARGET_MP"
+    else
+        echo "  No existing same mapping."
+    fi
+
+    case "$mount_type" in
+        sshfs)
+            mount_sshfs "$gw" "$sh"
+            ;;
+        cifs)
+            mount_cifs "$gw" "$sh"
+            ;;
+        *)
+            die "unsupported mount type: $mount_type"
+            ;;
+    esac
+
+    echo
+    echo "Mounted successfully."
+    echo
+    echo "Use:"
+    echo "  nemo $TARGET_MP"
+    echo "  cd $TARGET_MP"
+
+    if [[ "$OPEN_FILE_MANAGER" -eq 1 ]]; then
+        open_path_or_url "$TARGET_MP"
+    fi
+
+    echo
+    echo "Before disconnecting, close file manager windows and leave the directory."
+    echo "Press Enter or Ctrl-C to disconnect."
+    read -r || exit 0
+}
+
+parse_args() {
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            -g|--gateway)
+                [[ $# -ge 2 ]] || die "$1 requires a value"
+                GATEWAY="$2"
+                shift 2
+                ;;
+            -s|--share)
+                [[ $# -ge 2 ]] || die "$1 requires a value"
+                SHARE="$2"
+                shift 2
+                ;;
+            -u|--user)
+                [[ $# -ge 2 ]] || die "$1 requires a value"
+                REMOTE_USER="$2"
+                shift 2
+                ;;
+            --cleanup)
+                CLEANUP_ONLY=1
+                shift
+                ;;
+            --remove-dirs)
+                REMOVE_DIRS=1
+                shift
+                ;;
+            --list)
+                LIST_ONLY=1
+                shift
+                ;;
+            --status)
+                STATUS_ONLY=1
+                shift
+                ;;
+            --check)
+                CHECK_ONLY=1
+                shift
+                ;;
+            --open)
+                OPEN_FILE_MANAGER=1
+                shift
+                ;;
+            --config)
+                [[ $# -ge 2 ]] || die "$1 requires a value"
+                CONFIG_FILE="$2"
+                shift 2
+                ;;
+            -h|--help)
+                usage
+                exit 0
+                ;;
+            *)
+                die "unknown option: $1"
+                ;;
+        esac
+    done
+}
+
+main() {
+    parse_args "$@"
+
+    need_cmd jq
+    need_cmd mountpoint
+    need_cmd mount
+    need_cmd umount
+    need_cmd sudo
+
+    if [[ "$CHECK_ONLY" -eq 1 ]]; then
+        check_dependencies
+        exit 0
+    fi
+
+    CONFIG_FILE="$(resolve_config)"
+    validate_config
+
+    if [[ "$LIST_ONLY" -eq 1 ]]; then
+        list_config
+        exit 0
+    fi
+
+    if [[ "$STATUS_ONLY" -eq 1 ]]; then
+        status_known_mounts
+        exit 0
+    fi
+
+    if [[ "$CLEANUP_ONLY" -eq 1 ]]; then
+        cleanup_all_known
+        exit 0
+    fi
+
+    if [[ -z "$GATEWAY" && -z "$SHARE" ]]; then
+        interactive_select
+    elif [[ -z "$GATEWAY" || -z "$SHARE" ]]; then
+        die "both --gateway/-g and --share/-s are required in non-interactive mode"
+    fi
+
+    validate_selection "$GATEWAY" "$SHARE"
+
+    trap cleanup_current_session EXIT INT TERM
+
+    mount_mapping "$GATEWAY" "$SHARE"
+}
+
+main "$@"

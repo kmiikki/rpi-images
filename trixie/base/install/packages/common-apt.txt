@@ -3,6 +3,8 @@ curl
 wget
 git
 rsync
+sshfs
+cifs-utils
 build-essential
 pkg-config
 unzip
@@ -30,6 +32,7 @@ python3
 python3-venv
 python3-pip
 fonts-dejavu-core
+fonts-noto-core
 libreoffice-voikko
 voikko-fi
 libvoikko1

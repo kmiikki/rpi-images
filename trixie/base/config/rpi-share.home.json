@@ -1,0 +1,40 @@
+{
+  "version": "1.0",
+
+  "defaults": {
+    "gateway": "nasse",
+    "share": "root"
+  },
+
+  "gateways": {
+    "nasse": {
+      "host": "nasse",
+      "description": "Home NAS",
+      "allowed_groups": ["kim"],
+      "default_user": "kim"
+    }
+  },
+
+  "shares": {
+    "root": {
+      "mount_type": "browse",
+      "browse_url": "smb://nasse/",
+      "description": "NAS root (browse view)",
+      "allowed_groups": ["kim"]
+    },
+    "code": {
+      "mount_type": "cifs",
+      "remote_path": "/Code",
+      "description": "NAS Code share",
+      "allowed_groups": ["kim"],
+      "cifs_options": "iocharset=utf8,vers=3.0,noserverino"
+    },
+    "books": {
+      "mount_type": "cifs",
+      "remote_path": "/Books",
+      "description": "NAS Books share",
+      "allowed_groups": ["kim"],
+      "cifs_options": "iocharset=utf8,vers=3.0,noserverino"
+    }
+  }
+}

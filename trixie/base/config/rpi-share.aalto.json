@@ -1,38 +1,123 @@
 {
-  "version": "1.0",
-
+  "version": 1,
   "defaults": {
     "gateway": "viila",
-    "share": "teamwork-t100"
+    "share": "teamwork-chem"
   },
-
   "gateways": {
     "viila": {
       "host": "viila.org.aalto.fi",
-      "description": "Aalto staff gateway (preferred)",
-      "allowed_groups": ["staff"],
-      "default_user": ""
+      "description": "Aalto staff gateway (preferred; students need staff status)",
+      "allowed_groups": [
+        "staff"
+      ]
     },
     "kosh": {
       "host": "kosh.org.aalto.fi",
-      "description": "Aalto student + staff gateway",
-      "allowed_groups": ["staff", "students"],
-      "default_user": ""
+      "description": "Aalto student and staff gateway",
+      "allowed_groups": [
+        "students",
+        "staff"
+      ]
     }
   },
-
   "shares": {
-    "teamwork-t100": {
+    "teamwork-chem": {
+      "description": "Teamwork CHEM / dean's unit",
+      "allowed_groups": [
+        "Aalto AD group controlled"
+      ],
       "mount_type": "sshfs",
-      "remote_path": "/m/teamwork/t100",
-      "description": "Teamwork CHEM (t100)",
-      "allowed_groups": ["staff", "students"]
+      "paths": {
+        "viila": "/m/teamwork/t1/T100",
+        "kosh": "/m/teamwork/T100"
+      }
+    },
+    "teamwork-cmat": {
+      "description": "Teamwork CMAT (t105)",
+      "allowed_groups": [
+        "Aalto AD group controlled"
+      ],
+      "mount_type": "sshfs",
+      "paths": {
+        "viila": "/m/teamwork/t1/T105",
+        "kosh": "/m/teamwork/T105"
+      }
+    },
+    "teamwork-cmet": {
+      "description": "Teamwork CMET (t106)",
+      "allowed_groups": [
+        "Aalto AD group controlled"
+      ],
+      "mount_type": "sshfs",
+      "paths": {
+        "viila": "/m/teamwork/t1/T106",
+        "kosh": "/m/teamwork/T106"
+      }
+    },
+    "teamwork-bio2": {
+      "description": "Teamwork BIO2 (t107)",
+      "allowed_groups": [
+        "Aalto AD group controlled"
+      ],
+      "mount_type": "sshfs",
+      "paths": {
+        "viila": "/m/teamwork/t1/T107",
+        "kosh": "/m/teamwork/T107"
+      }
+    },
+    "teamwork-rvim": {
+      "description": "CHEM research, videos, images and media (staff-oriented)",
+      "allowed_groups": [
+        "Aalto AD group controlled"
+      ],
+      "mount_type": "sshfs",
+      "paths": {
+        "viila": "/m/teamwork/chem_rvim"
+      }
     },
     "work-t100": {
+      "description": "Work CHEM / dean's unit (t100)",
+      "allowed_groups": [
+        "Aalto AD group controlled"
+      ],
       "mount_type": "sshfs",
-      "remote_path": "/m/work/t100",
-      "description": "Work CHEM (t100)",
-      "allowed_groups": ["staff", "students"]
+      "remote_path": "/m/work/t100"
+    },
+    "work-t105": {
+      "description": "Work CMAT (t105)",
+      "allowed_groups": [
+        "Aalto AD group controlled"
+      ],
+      "mount_type": "sshfs",
+      "remote_path": "/m/work/t105"
+    },
+    "work-t106": {
+      "description": "Work CMET (t106)",
+      "allowed_groups": [
+        "Aalto AD group controlled"
+      ],
+      "mount_type": "sshfs",
+      "remote_path": "/m/work/t106"
+    },
+    "work-t107": {
+      "description": "Work BIO2 (t107)",
+      "allowed_groups": [
+        "Aalto AD group controlled"
+      ],
+      "mount_type": "sshfs",
+      "remote_path": "/m/work/t107"
+    },
+    "teamwork-chem-scratch": {
+      "description": "CHEM IT admin scratch / fallback share (admin only)",
+      "allowed_groups": [
+        "Chem IT admins"
+      ],
+      "mount_type": "sshfs",
+      "explicit_only": true,
+      "paths": {
+        "viila": "/m/teamwork/chem_scratch"
+      }
     }
   }
 }

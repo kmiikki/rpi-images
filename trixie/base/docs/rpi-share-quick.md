@@ -1,139 +1,149 @@
-# rpi-share – Quick Guide
+# rpi-share – Quick Guide (Lab Users)
 
-`rpi-share` is used to access network storage (Aalto / NAS) safely.
+## 📦 Copy files to Aalto shared storage
 
 ---
 
-## Basic Usage
+## ▶️ 1. Start
 
-### Interactive (recommended)
+Open terminal and run:
 
-```
-
+```bash
 rpi-share
-
 ```
 
 ---
 
-### Direct use
+## 🧭 2. Follow the instructions
 
+### Select your role
+
+```text
+1) Staff / staff status
+2) Student
 ```
 
-rpi-share -g nasse -s code
-rpi-share -g viila -s teamwork-t100
+👉 Choose the option that applies to you
 
+---
+
+### Select server
+
+```text
+1) viila  (staff – recommended)
+2) kosh   (students + staff)
+```
+
+👉 If unsure:
+
+* staff → **viila**
+* student → **kosh**
+
+---
+
+### Select storage location
+
+Example:
+
+```text
+1) teamwork-chem   (recommended)
+2) teamwork-cmet
+3) work-t100
+...
+```
+
+👉 Choose your group / project location
+
+---
+
+### Enter username
+
+```text
+username:
+```
+
+👉 Use your normal Aalto username
+
+---
+
+## 📂 3. Copy files
+
+Open file manager:
+
+```bash
+nemo /media/rpi-share/...
+```
+
+Then:
+
+👉 Drag & drop files
+👉 Or copy/paste
+
+---
+
+## ⏳ 4. Wait until copy finishes
+
+Do NOT close anything during transfer.
+
+---
+
+## 🔌 5. Disconnect
+
+1. Close file manager windows
+2. Return to terminal
+3. Press:
+
+```text
+Enter
 ```
 
 ---
 
-## What Happens
+## 🔄 Typical workflow
 
-```
-
-start script → mount
-exit script  → unmount
-
-```
-
-The network share is available only while the script is running.
-
----
-
-## How to Use
-
-1. Run `rpi-share`
-2. Open files using:
-   - Nemo (file manager)
-   - terminal
-3. When done:
-   - close file manager windows
-   - leave the directory (`cd ~`)
-4. Press Enter → disconnect
-
----
-
-## Important Rules
-
-✔ Always close file manager before exiting  
-✔ Do not stay inside the mounted directory  
-✔ Use `cd ~` before disconnect  
-
----
-
-## If You See “target is busy”
-
-This means something is still using the share.
-
-Fix:
-
-1. Close Nemo / file manager  
-2. Close terminals inside the share  
-3. Close editors or viewers  
-4. Press Enter to retry  
-
----
-
-## Cleanup
-
-If something gets stuck:
-
-```
-
-rpi-share --cleanup --remove-dirs
-
+```text
+[ Instrument PC ] ─┐
+                   ├──► rpi-share ───► Aalto shared storage (Teamwork / Work)
+[ Raspberry Pi ] ──┤
+                   │
+[ Lab computer ] ──┘
 ```
 
 ---
 
-## Last Resort
+## ⚠️ Important
 
+* ❌ Do NOT store research data in personal home directory
+* ✅ Use shared Teamwork or Work storage
+* ❌ Do NOT unplug network during transfer
+* ❌ Do NOT close terminal while copying
+
+---
+
+## 🧯 If something goes wrong
+
+Check status:
+
+```bash
+rpi-share --status
 ```
 
-reboot
+Clean up:
 
+```bash
+rpi-share --cleanup
 ```
 
 ---
 
-## What NOT to do
+## 💡 Tips
 
-Do NOT run:
-
-```
-
-umount -l
-umount -f
-
-```
-
-These can freeze the system.
+* If one server does not work → try the other (`viila` / `kosh`)
+* If access fails → you may not have permission
+* Ask your supervisor or lab admin if unsure
 
 ---
 
-## Examples
+## 🆘 Need help?
 
-### Home NAS
-
-```
-
-rpi-share -g nasse -s code
-
-```
-
-### Aalto
-
-```
-
-rpi-share -g viila -s teamwork-t100
-
-```
-
----
-
-## Summary
-
-✔ Run → use → close → exit  
-✔ Always close file manager first  
-✔ If busy → retry  
-✔ If stuck → cleanup or reboot  
+Contact your lab admin / Chem-IT

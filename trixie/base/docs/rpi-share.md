@@ -1,449 +1,169 @@
 # rpi-share
 
-`rpi-share` is a portable CLI tool for accessing network shares safely on Raspberry Pi and Linux systems.
+`rpi-share` is a portable Bash CLI tool for mounting remote storage (Aalto or NAS) on a Raspberry Pi or Linux system.
 
-Designed for lab environments where:
-
-- USB storage is restricted
-- multiple users share machines
-- stability and predictability are critical
+It is designed for simple and reliable data transfer between lab instruments and shared storage.
 
 ---
 
-## Key Features
+## What it does
 
-- Session-based network mounts
-- Supports:
-  - `sshfs` (Aalto)
-  - `cifs` (NAS)
-  - `browse` (GUI open)
-- No passwords stored in configuration
-- Safe unmount (no forced or lazy unmount)
-- Works with GUI (Nemo) and CLI
+* Mounts remote storage locally using SSHFS or CIFS
+* Uses existing authentication (SSH / Aalto AD)
+* Allows file transfer using a file manager (e.g. Nemo) or terminal
+* Safely unmounts when finished
 
 ---
 
-## Configuration
+## Typical usage (recommended)
 
-Configuration is provided via JSON:
+Start guided mode:
 
-```
-
-rpi-share.json
-
-```
-
-Resolution order:
-
-1. Current working directory
-2. `~/.config/rpi-share.json`
-3. Script directory
-
-Override:
-
-```
-
-rpi-share --config file.json
-
-```
-
----
-
-## Usage
-
-### Interactive
-
-```
-
+```bash
 rpi-share
-
 ```
 
-### Non-interactive
+Follow the prompts:
 
+1. Select gateway
+2. Select storage location
+3. Enter your username
+4. Copy files
+5. Press Enter to disconnect
+
+---
+
+## Direct usage
+
+You can skip guided mode:
+
+```bash
+rpi-share -g viila -s work-t100
 ```
 
-rpi-share -g nasse -s code
-rpi-share -g viila -s teamwork-t100
+With explicit username:
 
+```bash
+rpi-share -g viila -s work-t100 -u username
 ```
 
-### Cleanup
+---
 
+## Installation
+
+Copy the script to a suitable location:
+
+```bash
+sudo cp rpi-share /opt/lab/bin/rpi-share
+sudo chmod +x /opt/lab/bin/rpi-share
 ```
 
+The script is fully portable and does not require installation.
+
+---
+
+## Configuration (required)
+
+`rpi-share` requires a JSON configuration file.
+
+Search order:
+
+```text
+1. ./rpi-share.json
+2. ~/.config/rpi-share.json
+3. <script_dir>/rpi-share.json
+```
+
+Override with:
+
+```bash
+rpi-share --config /path/to/file.json
+```
+
+---
+
+## Common commands
+
+```bash
+rpi-share --list
+rpi-share --status
 rpi-share --cleanup
 rpi-share --cleanup --remove-dirs
-
+rpi-share --check
 ```
 
 ---
 
-## Mount Lifecycle
+## Mount location
 
-```
+Mounted shares appear under:
 
-start script → mount
-exit script  → unmount
-
-```
-
-- Mount exists only during session
-- Script attempts clean unmount on exit
-
----
-
-## Safe Unmount Behaviour
-
-The tool intentionally avoids:
-
-```
-
-umount -l
-umount -f
-
-```
-
-Reason:
-
-> Lazy or forced unmount may freeze the system when GUI applications (e.g. Nemo) are using CIFS mounts.
-
-Instead:
-
-1. Normal unmount
-2. If busy → user closes applications
-3. Retry loop until safe
-4. User may exit (`q`) and retry later
-
----
-
-# 🔍 Debugging & Diagnostics
-
-## Check active mounts
-
-```
-
-mount | grep rpi-share
-
-```
-
-or:
-
-```
-
-mountpoint /media/rpi-share/<...>
-
-```
-
----
-
-## Check processes using the mount
-
-```
-
-lsof +D /media/rpi-share
-
-```
-
-or:
-
-```
-
-fuser -vm /media/rpi-share
-
-```
-
----
-
-## Check network connectivity
-
-### NAS
-
-```
-
-ping nasse
-
-```
-
-### Aalto
-
-```
-
-ssh viila
-
-```
-
----
-
-## Check SSHFS
-
-```
-
-sshfs user@host:/path /mnt/test
-
-```
-
----
-
-## Check CIFS manually
-
-```
-
-sudo mount -t cifs //host/share /mnt/test -o user=USER
-
-```
-
----
-
-## Check dependencies
-
-```
-
-which sshfs
-which mount.cifs
-which jq
-which timeout
-
-```
-
----
-
-# ⚠️ Common Failure Cases
-
-## 1. Mount is busy
-
-Error:
-
-```
-
-target is busy
-
-```
-
-Cause:
-
-- Nemo open
-- terminal inside mount
-- file in use
-
-Fix:
-
-```
-
-cd ~
-close Nemo
-close editors
-rpi-share --cleanup
-
-```
-
----
-
-## 2. System freeze risk (IMPORTANT)
-
-Cause:
-
-```
-
-umount -l or forced unmount
-
-* CIFS
-* GUI
-
-```
-
-Effect:
-
-- UI freeze
-- kernel I/O hang
-
-Prevention:
-
-```
-
-NEVER use:
-umount -l
-umount -f
-
-```
-
----
-
-## 3. Wrong hostname
-
-Error:
-
-```
-
-host not found
-
-```
-
-Fix:
-
-```
-
-/etc/hosts
-
+```text
+/media/rpi-share/<gateway>/<share>
 ```
 
 Example:
 
-```
-
-10.0.0.5 nasse
-
-```
-
----
-
-## 4. Permission denied (SSH)
-
-Cause:
-
-- wrong username
-- missing SSH key
-
-Fix:
-
-```
-
-ssh user@host
-
+```text
+/media/rpi-share/viila/work-t100
 ```
 
 ---
 
-## 5. CIFS authentication failure
+## Important notes
 
-Cause:
-
-- wrong password
-- domain mismatch
-
-Fix:
-
-- re-enter password
-- verify NAS user
+* Close file manager windows before disconnecting
+* Do not use lazy or forced unmount
+* Access rights are controlled by the remote system (e.g. Aalto AD)
+* Some shares may not be visible if you do not have permission
 
 ---
 
-## 6. Mount disappears in GUI
+## Aalto usage notes
 
-Cause:
-
-- session ended
-- mount cleaned up
-
-Expected behaviour:
-
-```
-
-session-based model
-
-```
+* `viila` → staff gateway (recommended for staff)
+* `kosh` → student + staff gateway
+* Teamwork and Work shares may differ between gateways
+* Use shared storage for research data (not personal home directories)
 
 ---
 
-## 7. Cleanup does not remove directory
+## Troubleshooting
 
-Cause:
+Check active mounts:
 
-- mount still active
-- hidden process
-
-Fix:
-
+```bash
+rpi-share --status
 ```
 
-lsof +D /media/rpi-share
-kill process if needed
+Clean up:
 
+```bash
+rpi-share --cleanup
+```
+
+Check dependencies:
+
+```bash
+rpi-share --check
 ```
 
 ---
 
-# 🧪 Advanced Debug
+## Advanced usage
 
-## Trace mount activity
+See:
 
-```
-
-strace -f rpi-share ...
-
-```
-
----
-
-## Monitor kernel messages
-
-```
-
-dmesg -w
-
-```
-
-Look for:
-
-- CIFS errors
-- I/O timeouts
-
----
-
-## Check mount table
-
-```
-
-cat /proc/mounts | grep rpi-share
-
+```text
+docs/rpi-share-advanced.md
 ```
 
 ---
 
-# 🔐 Security Model
+## Design principles
 
-- No passwords stored in JSON
-- Credentials requested at runtime
-- Temporary credentials removed on exit
-
----
-
-# 🧠 Design Principles
-
-- No hidden automation
-- No stored credentials
-- No unsafe unmount operations
-- User remains in control
-- Stability over convenience
-
----
-
-# 🧯 Recovery Strategy
-
-If things go wrong:
-
-1. Close all applications using the mount
-2. Run:
-
-```
-
-rpi-share --cleanup --remove-dirs
-
-```
-
-3. If still stuck:
-
-```
-
-reboot
-
-```
-
----
-
-# 🧭 Notes
-
-- Do not use `.local` (no mDNS)
-- Use `/etc/hosts` or DNS
-- Works on Raspberry Pi OS and Ubuntu
-
+* No stored credentials
+* No privilege escalation
+* Uses existing authentication
+* Safe and predictable behavior
+* Minimal user friction

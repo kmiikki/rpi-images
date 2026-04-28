@@ -17,6 +17,10 @@ REMOVE_DIRS=0
 LIST_ONLY=0
 STATUS_ONLY=0
 CHECK_ONLY=0
+LIST_ALL=0
+DEBUG=0
+ADMIN_MODE=0
+ADMIN_ACCOUNT_CONFIRMED=0
 
 TARGET_MP=""
 MOUNTED_BY_THIS_SCRIPT=0
@@ -36,6 +40,8 @@ Usage:
   $PROGRAM --cleanup
   $PROGRAM --cleanup --remove-dirs
   $PROGRAM --list
+  $PROGRAM --list --all
+  $PROGRAM --list --admin
   $PROGRAM --status
   $PROGRAM --check
 
@@ -45,7 +51,10 @@ Options:
   -u, --user USER        Remote username for sshfs/cifs
   --cleanup              Unmount all known rpi-share mappings and exit
   --remove-dirs          Remove empty managed mountpoint directories, including base dir if possible
-  --list                 List configured gateways and shares
+  --list                 List configured gateways and non-explicit shares
+  --all                  Include explicit-only shares in --list
+  --admin                Admin mode: include admin/explicit-only shares in guided mode and --list
+  --debug, --verbose     Show raw mount errors and extra diagnostics
   --status               Show active known mounts
   --check                Check dependencies
   --open                 Open file manager after successful mount/browse
@@ -113,13 +122,23 @@ mount_type_for() {
     json_get ".shares[\"$sh\"].mount_type"
 }
 
+remote_path_for() {
+    local gw="$1"
+    local sh="$2"
+
+    local p
+    p="$(json_get ".shares[\"$sh\"].paths[\"$gw\"] // .shares[\"$sh\"].remote_path // \"\"")"
+    [[ -n "$p" && "$p" != "null" ]] || die "share '$sh' has no remote path for gateway '$gw'"
+    echo "$p"
+}
+
 remote_display_for() {
     local gw="$1"
     local sh="$2"
 
     local host remote_path mount_type browse_url
     host="$(json_get ".gateways[\"$gw\"].host")"
-    remote_path="$(json_get ".shares[\"$sh\"].remote_path // \"\"")"
+    remote_path="$(remote_path_for "$gw" "$sh" 2>/dev/null || true)"
     mount_type="$(mount_type_for "$sh")"
 
     case "$mount_type" in
@@ -255,8 +274,13 @@ list_config() {
         "  \(.key)\n    Host   : \(.value.host)\n    Access : \(.value.allowed_groups | join(", "))\n"' "$CONFIG_FILE"
 
     echo "Shares:"
-    jq -r '.shares | to_entries[] |
-        "  \(.key)\n    Type        : \(.value.mount_type)\n    Remote path : \(.value.remote_path // "-")\n    Access      : \(.value.allowed_groups | join(", "))\n"' "$CONFIG_FILE"
+    if [[ "$LIST_ALL" -eq 1 || "$ADMIN_MODE" -eq 1 ]]; then
+        jq -r '.shares | to_entries[] |
+            "  \(.key)\n    Type          : \(.value.mount_type)\n    Remote path   : \(.value.remote_path // (if .value.paths then (.value.paths | to_entries | map(.key + ":" + .value) | join(", ")) else "-" end))\n    Access        : \(.value.allowed_groups | join(", "))\n    Explicit only : \(.value.explicit_only // false)\n"' "$CONFIG_FILE"
+    else
+        jq -r '.shares | to_entries[] | select((.value.explicit_only // false) == false) |
+            "  \(.key)\n    Type          : \(.value.mount_type)\n    Remote path   : \(.value.remote_path // (if .value.paths then (.value.paths | to_entries | map(.key + ":" + .value) | join(", ")) else "-" end))\n    Access        : \(.value.allowed_groups | join(", "))\n    Explicit only : \(.value.explicit_only // false)\n"' "$CONFIG_FILE"
+    fi
 }
 
 status_known_mounts() {
@@ -455,7 +479,184 @@ cleanup_current_session() {
     fi
 }
 
+
+is_aalto_config() {
+    json_exists '.gateways["viila"]' && json_exists '.gateways["kosh"]'
+}
+
+is_admin_account() {
+    local user="$1"
+    [[ "$user" == wa.* || "$user" == sa.* ]]
+}
+
+confirm_admin_account_if_needed() {
+    local user="$1"
+
+    if [[ "$ADMIN_ACCOUNT_CONFIRMED" -eq 1 ]]; then
+        return 0
+    fi
+
+    if ! is_admin_account "$user"; then
+        return 0
+    fi
+
+    echo
+    echo "Warning: you are using an admin account:"
+    echo "  $user"
+    echo
+    echo "Admin accounts are intended for maintenance and cleanup tasks."
+    echo "For routine research data transfer, use your personal Aalto account."
+    echo
+
+    local answer
+    read -rp "Continue with this admin account? [y/N]: " answer
+    answer="${answer:-N}"
+    [[ "$answer" =~ ^[Yy]$ ]] || die "cancelled"
+    ADMIN_ACCOUNT_CONFIRMED=1
+}
+
+share_is_visible_for_gateway() {
+    local gw="$1"
+    local sh="$2"
+
+    if [[ "$ADMIN_MODE" -ne 1 ]]; then
+        local explicit
+        explicit="$(json_get ".shares[\"$sh\"].explicit_only // false")"
+        [[ "$explicit" == "true" ]] && return 1
+    fi
+
+    remote_path_for "$gw" "$sh" >/dev/null 2>&1
+}
+
+build_share_menu_for_gateway() {
+    local gw="$1"
+
+    jq -r '.shares | keys[]' "$CONFIG_FILE" | while read -r sh; do
+        if share_is_visible_for_gateway "$gw" "$sh"; then
+            local desc mtype rpath explicit
+            desc="$(json_get ".shares[\"$sh\"].description // \"\"")"
+            mtype="$(mount_type_for "$sh")"
+            rpath="$(remote_path_for "$gw" "$sh" 2>/dev/null || true)"
+            explicit="$(json_get ".shares[\"$sh\"].explicit_only // false")"
+            printf '%s\t%s\t%s\t%s\t%s\n' "$sh" "$desc" "$mtype" "$rpath" "$explicit"
+        fi
+    done
+}
+
+choose_from_numbered_menu() {
+    local prompt="$1"
+    local default_index="$2"
+    shift 2
+    local items=("$@")
+
+    local answer
+    while true; do
+        read -rp "$prompt [$default_index]: " answer
+        answer="${answer:-$default_index}"
+
+        if [[ "$answer" =~ ^[0-9]+$ ]] && (( answer >= 1 && answer <= ${#items[@]} )); then
+            echo "${items[$((answer-1))]}"
+            return 0
+        fi
+
+        for item in "${items[@]}"; do
+            if [[ "$answer" == "$item" ]]; then
+                echo "$item"
+                return 0
+            fi
+        done
+
+        echo "Please enter a number from 1 to ${#items[@]}, or a listed name." >&2
+    done
+}
+
+guided_select_aalto() {
+    local role default_idx default_share
+    local gateway_items=()
+
+    echo "Using config: $CONFIG_FILE"
+    echo
+    echo "Welcome to rpi-share guided setup."
+    echo
+    echo "This tool connects this Raspberry Pi to Aalto shared storage."
+    echo "Use shared Teamwork or Work locations for research data, not personal home directories."
+    echo
+    echo "Are you Aalto staff, or do you have staff status?"
+    echo "  1) Yes - I am staff or I have staff status"
+    echo "  2) No  - I am a student without staff status"
+    echo
+    role="$(choose_from_numbered_menu "Select" 1 "staff" "student")"
+
+    echo
+    echo "Select Aalto gateway:"
+    if [[ "$role" == "staff" ]]; then
+        echo "  1) viila  - Staff gateway (recommended for staff)"
+        echo "  2) kosh   - Student + staff gateway"
+        gateway_items=("viila" "kosh")
+        default_idx=1
+    else
+        echo "  1) kosh   - Student + staff gateway (recommended for students)"
+        echo "  2) viila  - Staff gateway; works only if you also have staff status"
+        gateway_items=("kosh" "viila")
+        default_idx=1
+    fi
+    echo
+    GATEWAY="$(choose_from_numbered_menu "Select gateway" "$default_idx" "${gateway_items[@]}")"
+
+    echo
+    echo "Select shared storage location for gateway '$GATEWAY':"
+    echo
+
+    local shares=() descs=() paths=() explicits=()
+    while IFS=$'\t' read -r sh desc mtype rpath explicit; do
+        shares+=("$sh")
+        descs+=("$desc")
+        paths+=("$rpath")
+        explicits+=("$explicit")
+    done < <(build_share_menu_for_gateway "$GATEWAY")
+
+    [[ ${#shares[@]} -gt 0 ]] || die "no shares are available for gateway '$GATEWAY'"
+
+    default_share="$(json_get '.defaults.share // ""')"
+    default_idx=1
+    for i in "${!shares[@]}"; do
+        if [[ "${shares[$i]}" == "$default_share" ]]; then
+            default_idx=$((i+1))
+            break
+        fi
+    done
+
+    for i in "${!shares[@]}"; do
+        local label="${shares[$i]}"
+        if [[ "${explicits[$i]}" == "true" ]]; then
+            label="$label  [admin]"
+        fi
+        printf "  %2d) %-28s %s\n" "$((i+1))" "$label" "${descs[$i]}"
+        if [[ "$DEBUG" -eq 1 ]]; then
+            printf "      path: %s\n" "${paths[$i]}"
+        fi
+    done
+    echo
+    echo "The actual access decision is made by Aalto AD groups when mounting."
+    echo
+
+    SHARE="$(choose_from_numbered_menu "Select share" "$default_idx" "${shares[@]}")"
+
+    if [[ -n "$REMOTE_USER" ]]; then
+        echo
+        echo "Aalto username for remote login: $REMOTE_USER (from -u)"
+        confirm_admin_account_if_needed "$REMOTE_USER"
+    fi
+}
+
 interactive_select() {
+    if is_aalto_config; then
+        guided_select_aalto
+        return
+    fi
+
+    # Generic interactive mode for home/NAS configs. Keep this simple so
+    # Aalto-specific guided questions do not affect non-Aalto configurations.
     local default_gw default_sh answer
 
     default_gw="$(json_get '.defaults.gateway')"
@@ -488,8 +689,13 @@ interactive_select() {
 
     echo
     echo "Available shares:"
-    jq -r '.shares | to_entries[] |
-        "  \(.key)\n    Type        : \(.value.mount_type)\n    Remote path : \(.value.remote_path // "-")\n    Access      : \(.value.allowed_groups | join(", "))\n"' "$CONFIG_FILE"
+    if [[ "$ADMIN_MODE" -eq 1 ]]; then
+        jq -r '.shares | to_entries[] |
+            "  \(.key)\n    Type        : \(.value.mount_type)\n    Remote path : \(.value.remote_path // (if .value.paths then (.value.paths | to_entries | map(.key + ":" + .value) | join(", ")) else "-" end))\n    Access      : \(.value.allowed_groups | join(", "))\n    Explicit    : \(.value.explicit_only // false)\n"' "$CONFIG_FILE"
+    else
+        jq -r '.shares | to_entries[] | select((.value.explicit_only // false) == false) |
+            "  \(.key)\n    Type        : \(.value.mount_type)\n    Remote path : \(.value.remote_path // (if .value.paths then (.value.paths | to_entries | map(.key + ":" + .value) | join(", ")) else "-" end))\n    Access      : \(.value.allowed_groups | join(", "))\n"' "$CONFIG_FILE"
+    fi
 
     read -rp "Share: " SHARE
     [[ -n "$SHARE" ]] || die "share cannot be empty"
@@ -511,6 +717,8 @@ open_path_or_url() {
 
 prompt_remote_user_if_needed() {
     if [[ -n "$REMOTE_USER" ]]; then
+        echo "Remote username: $REMOTE_USER (from -u)"
+        confirm_admin_account_if_needed "$REMOTE_USER"
         return
     fi
 
@@ -525,6 +733,7 @@ prompt_remote_user_if_needed() {
     fi
 
     [[ -n "$REMOTE_USER" ]] || die "remote username cannot be empty"
+    confirm_admin_account_if_needed "$REMOTE_USER"
 }
 
 mount_browse() {
@@ -556,7 +765,7 @@ mount_sshfs() {
 
     local host remote_path remote
     host="$(json_get ".gateways[\"$gw\"].host")"
-    remote_path="$(json_get ".shares[\"$sh\"].remote_path")"
+    remote_path="$(remote_path_for "$gw" "$sh")"
 
     prompt_remote_user_if_needed
 
@@ -570,9 +779,35 @@ mount_sshfs() {
     echo "If SSH keys are configured, no password is needed."
     echo
 
-    sshfs "$remote" "$TARGET_MP" \
-        -o reconnect,ServerAliveInterval=15,ServerAliveCountMax=3
+    local err_file
+    err_file="$(mktemp)"
 
+    if ! sshfs "$remote" "$TARGET_MP" \
+        -o reconnect,ServerAliveInterval=15,ServerAliveCountMax=3 2>"$err_file"; then
+        echo
+        echo "Mount failed."
+        echo
+        echo "You may not have access to this share, or the remote path may not be available:"
+        echo "  Share : $sh"
+        echo "  Path  : $remote_path"
+        echo
+        echo "Try another share, or contact your group/admin if you believe you should have access."
+        if [[ "$gw" == "viila" ]]; then
+            echo
+            echo "Tip:"
+            echo "  Students without staff status should try:"
+            echo "    $PROGRAM -g kosh -s $sh"
+        fi
+        if [[ "$DEBUG" -eq 1 ]]; then
+            echo
+            echo "Raw sshfs error:"
+            sed 's/^/  /' "$err_file"
+        fi
+        rm -f "$err_file"
+        return 1
+    fi
+
+    rm -f "$err_file"
     MOUNTED_BY_THIS_SCRIPT=1
 }
 
@@ -584,7 +819,7 @@ mount_cifs() {
 
     local host remote_path remote options password uid gid
     host="$(json_get ".gateways[\"$gw\"].host")"
-    remote_path="$(json_get ".shares[\"$sh\"].remote_path")"
+    remote_path="$(remote_path_for "$gw" "$sh")"
     remote="//$host$remote_path"
     options="$(json_get ".shares[\"$sh\"].cifs_options // \"iocharset=utf8,vers=3.0,noserverino\"")"
 
@@ -640,6 +875,16 @@ mount_mapping() {
     echo "  $TARGET_MP"
     ensure_base_dir
     sudo mkdir -p "$TARGET_MP"
+    case "$mount_type" in
+        sshfs)
+            sudo chown "$USER:$USER" "$TARGET_MP"
+            chmod 700 "$TARGET_MP"
+            ;;
+        cifs)
+            sudo chown root:root "$TARGET_MP"
+            sudo chmod 755 "$TARGET_MP"
+            ;;
+    esac
 
     echo
     echo "Checking existing same mapping:"
@@ -716,6 +961,18 @@ parse_args() {
                 STATUS_ONLY=1
                 shift
                 ;;
+            --all)
+                LIST_ALL=1
+                shift
+                ;;
+            --admin)
+                ADMIN_MODE=1
+                shift
+                ;;
+            --debug|--verbose)
+                DEBUG=1
+                shift
+                ;;
             --check)
                 CHECK_ONLY=1
                 shift
@@ -723,6 +980,11 @@ parse_args() {
             --open)
                 OPEN_FILE_MANAGER=1
                 shift
+                ;;
+            --config)
+                [[ $# -ge 2 ]] || die "$1 requires a value"
+                CONFIG_FILE="$2"
+                shift 2
                 ;;
             --config)
                 [[ $# -ge 2 ]] || die "$1 requires a value"
@@ -742,6 +1004,9 @@ parse_args() {
 
 main() {
     parse_args "$@"
+    if [[ "${RPI_SHARE_DEBUG:-0}" == "1" ]]; then
+        DEBUG=1
+    fi
 
     need_cmd jq
     need_cmd mountpoint

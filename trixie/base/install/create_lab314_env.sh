@@ -3,7 +3,7 @@ set -euo pipefail
 
 ENV_PREFIX="/opt/lab314"
 
-sudo /opt/conda/bin/conda create -y -p "$ENV_PREFIX" python=3.14
+sudo /opt/conda/bin/conda create -y -p "$ENV_PREFIX" python=3.14 pip
 
 sudo "$ENV_PREFIX/bin/python" -m pip install --upgrade pip
 
@@ -12,7 +12,7 @@ sudo "$ENV_PREFIX/bin/python" -m pip install \
     numpy pandas matplotlib scipy scikit-image \
     opencv-python pillow imageio tifffile \
     openpyxl seaborn pyarrow h5py ipykernel \
-    PySimpleGUI
+    PySimpleGUI pyserial
 
 sudo tee "$ENV_PREFIX/lib/python3.14/site-packages/sitecustomize.py" >/dev/null <<'EOF'
 import os

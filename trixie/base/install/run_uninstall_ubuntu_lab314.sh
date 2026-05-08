@@ -11,7 +11,9 @@ for arg in "$@"; do
     esac
 done
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_S
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PKG_DIR="$SCRIPT_DIR/packages"
+
 if command -v micromamba >/dev/null 2>&1; then
     micromamba env remove -y -n lab314 || true
 fi

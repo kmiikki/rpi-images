@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+if [[ -f /etc/bash.bashrc ]]; then
+    sudo sed -i '/# >>> LAB314 BEGIN >>>/,/# <<< LAB314 END <<</d' /etc/bash.bashrc
+fi
+
 cat <<'EOF' | sudo tee -a /etc/bash.bashrc >/dev/null
 # >>> LAB314 BEGIN >>>
 if [ -f /opt/conda/etc/profile.d/conda.sh ]; then

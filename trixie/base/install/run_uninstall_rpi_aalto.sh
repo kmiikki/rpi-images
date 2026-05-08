@@ -16,7 +16,9 @@ PKG_DIR="$SCRIPT_DIR/packages"
 
 sudo bash "$SCRIPT_DIR/uninstall_rpi_autoactivate.sh"
 sudo bash "$SCRIPT_DIR/uninstall_lab314_env.sh"
+sudo bash "$SCRIPT_DIR/uninstall_rpi_env.sh"
 sudo bash "$SCRIPT_DIR/uninstall_conda_base.sh"
+sudo bash "$SCRIPT_DIR/uninstall_envrun.sh"
 
 if [[ "$REMOVE_APT" -eq 1 ]]; then
     mapfile -t pkgs < <(cat "$PKG_DIR/common-apt.txt" "$PKG_DIR/rpi-apt.txt" | grep -v '^[[:space:]]*#' | grep -v '^[[:space:]]*$')

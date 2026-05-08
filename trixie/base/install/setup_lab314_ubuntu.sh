@@ -19,6 +19,7 @@ micromamba create -y -n "$ENV_NAME" -c conda-forge \
     scipy \
     scikit-image \
     opencv \
+    pyserial \
     pillow \
     imageio \
     tifffile \

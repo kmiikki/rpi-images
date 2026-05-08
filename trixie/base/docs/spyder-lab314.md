@@ -145,3 +145,35 @@ Expected on Raspberry Pi:
 ```
 
 If another interpreter appears, Spyder is not using `lab314`.
+
+---
+
+## Using Spyder with `/opt/rpi`
+
+For normal analysis work, keep using:
+
+```text
+/opt/lab314/bin/python
+```
+
+If you need to run or debug Raspberry Pi hardware scripts in Spyder, set the
+interpreter to:
+
+```text
+/opt/rpi/bin/python
+```
+
+Use `/opt/rpi/bin/python` for scripts that import Raspberry Pi OS APT Python
+modules such as:
+
+```text
+picamera2
+libcamera
+cv2 from APT python3-opencv
+smbus2
+RPi.GPIO
+gpiod
+```
+
+The `/opt/rpi` environment is optional and is intended for Raspberry Pi
+hardware-facing code. It is not the default analysis environment.

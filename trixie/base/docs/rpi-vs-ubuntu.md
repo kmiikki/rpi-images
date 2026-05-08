@@ -2,16 +2,19 @@
 
 ## Main Difference
 
-Raspberry Pi and Ubuntu use the same Python version and nearly the same package selection, but the installation method differs.
+Raspberry Pi and Ubuntu use related scientific Python environments, but their
+installation models differ.
 
-| Item                | Raspberry Pi            | Ubuntu                   |
-| ------------------- | ----------------------- | ------------------------ |
-| Python environment  | `/opt/lab314`           | `micromamba env lab314`  |
-| Package manager     | conda + pip             | micromamba               |
-| Spyder location     | apt package outside env | tools env outside lab314 |
-| Autoactivate lab314 | yes                     | no                       |
-| Picamera2           | installed               | not installed            |
-| OpenCV Qt font fix  | required                | usually not required     |
+| Item                | Raspberry Pi                      | Ubuntu                   |
+| ------------------- | --------------------------------- | ------------------------ |
+| Analysis environment| `/opt/lab314`                     | `micromamba env lab314`  |
+| Hardware environment| optional `/opt/rpi`               | not used by default      |
+| Package manager     | conda + pip                       | micromamba               |
+| Spyder location     | apt package outside env           | tools env outside lab314 |
+| Autoactivate lab314 | yes                               | no                       |
+| Picamera2           | APT/system Python                 | not installed            |
+| OpenCV in lab314    | pip `opencv-python`               | micromamba/conda package |
+| OpenCV in rpi       | APT `python3-opencv`              | not applicable           |
 
 ---
 
@@ -39,16 +42,89 @@ The environment is automatically activated for new terminals:
 
 Reason:
 
-* researchers should immediately get the correct Python environment
-* Raspberry Pi is usually a dedicated machine
+- researchers should immediately get the correct analysis environment
+- Raspberry Pi is usually a dedicated machine
 
-Picamera2 and Raspberry Pi-specific packages are installed with apt:
+---
+
+## Optional Raspberry Pi Hardware Environment
+
+Some Raspberry Pi OS Python modules are installed with APT and are tied to the
+system Python ABI. Examples:
 
 ```text
-python3-picamera2
-python3-libcamera
-python3-rpi.gpio
+picamera2
+libcamera
+cv2 from python3-opencv
+smbus2
+RPi.GPIO
+gpiod
 ```
+
+These modules are not visible from `/opt/lab314`.
+
+For hardware-facing scripts, create the optional environment:
+
+```text
+/opt/rpi
+```
+
+It uses the same Python minor version as:
+
+```text
+/usr/bin/python3
+```
+
+and sees:
+
+```text
+/usr/lib/python3/dist-packages
+```
+
+Use it with:
+
+```bash
+envrun rpi script.py
+```
+
+---
+
+## Python Environment Selection
+
+Use:
+
+```bash
+envrun lab314 script.py
+```
+
+for analysis, plotting, `udplot`, and generic Python scripts.
+
+Use:
+
+```bash
+envrun rpi script.py
+```
+
+for Raspberry Pi hardware scripts that need Picamera2, libcamera, APT OpenCV,
+GPIO, I2C/smbus2, or gpiod.
+
+---
+
+## Why Raspberry Pi `lab314` Uses pip OpenCV
+
+On Raspberry Pi, the pip version of `opencv-python` worked better with Python
+3.14 than the available distro packages for the clean analysis environment.
+
+However, this caused the Qt font problem described in:
+
+```text
+docs/opencv-qt-font-fix.md
+```
+
+This statement applies to `/opt/lab314`.
+
+The optional `/opt/rpi` environment uses APT `python3-opencv` instead, because
+that is the preferred model for Picamera2/libcamera compatibility.
 
 ---
 
@@ -72,23 +148,9 @@ and Spyder uses the interpreter from `lab314`.
 
 Reason:
 
-* Ubuntu is often a general-purpose workstation
-* automatic activation could interfere with other development work
-* multiple environments are common
-
----
-
-## Why Raspberry Pi Uses pip For OpenCV
-
-On Raspberry Pi, the pip version of `opencv-python` worked better with Python 3.14 than the available distro packages.
-
-However, this caused the Qt font problem described in:
-
-```text
-docs/opencv-qt-font-fix.md
-```
-
-Ubuntu may later move fully to micromamba packages if they become more reliable with Python 3.14.
+- Ubuntu is often a general-purpose workstation
+- automatic activation could interfere with other development work
+- multiple environments are common
 
 ---
 
@@ -96,12 +158,12 @@ Ubuntu may later move fully to micromamba packages if they become more reliable 
 
 The intention is:
 
-* one base installation per Raspberry Pi OS release
-* one common environment name: `lab314`
-* same Python version on Raspberry Pi and Ubuntu
-* same scientific package set where possible
+- one base installation per Raspberry Pi OS release
+- one common analysis environment name: `lab314`
+- optional hardware bridge environment on Raspberry Pi: `rpi`
+- same scientific package set where practical
 
-Current target version:
+Current target for `lab314`:
 
 ```text
 Python 3.14

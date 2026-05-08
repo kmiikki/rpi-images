@@ -30,7 +30,7 @@ Basic usage:
 
 ```bash
 ./install_optional_wolfram.sh
-````
+```
 
 Non-interactive:
 

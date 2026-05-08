@@ -118,3 +118,19 @@ Then test:
 * Text fields
 
 If labels are visible, the fix works.
+
+---
+
+## Note about `/opt/rpi`
+
+This fix applies to `/opt/lab314`, where OpenCV comes from the pip
+`opencv-python` package.
+
+The optional `/opt/rpi` environment uses APT `python3-opencv` through:
+
+```text
+/usr/lib/python3/dist-packages
+```
+
+That model is used for Picamera2/libcamera compatibility and should not need
+this pip OpenCV Qt font fix.

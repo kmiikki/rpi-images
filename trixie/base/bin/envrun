@@ -1,0 +1,90 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+show_help() {
+    cat <<'EOF'
+Usage:
+  envrun ENV SCRIPT [ARGS...]
+  envrun SCRIPT ENV [ARGS...]
+
+Known environments:
+  lab314   /opt/lab314/bin/python
+  rpi      /opt/rpi/bin/python
+
+Examples:
+  envrun lab314 script.py
+  envrun rpi camera_test.py
+  envrun lab314 udplot.py -l --smooth sg
+  envrun rpi dps-profile-cycle.py --port /dev/ttyUSB0 --addresses 1,2,3,4
+
+Alternative order is also accepted:
+  envrun script.py lab314
+  envrun camera_test.py rpi
+EOF
+}
+
+python_for_env() {
+    case "$1" in
+        lab314)
+            printf '%s\n' "/opt/lab314/bin/python"
+            ;;
+        rpi)
+            printf '%s\n' "/opt/rpi/bin/python"
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+}
+
+is_known_env() {
+    python_for_env "$1" >/dev/null 2>&1
+}
+
+if [[ $# -lt 1 ]]; then
+    show_help
+    exit 2
+fi
+
+if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
+    show_help
+    exit 0
+fi
+
+if [[ $# -lt 2 ]]; then
+    echo "ERROR: missing ENV or SCRIPT." >&2
+    echo >&2
+    show_help >&2
+    exit 2
+fi
+
+if is_known_env "$1"; then
+    ENV_NAME="$1"
+    SCRIPT="$2"
+    shift 2
+elif is_known_env "$2"; then
+    SCRIPT="$1"
+    ENV_NAME="$2"
+    shift 2
+else
+    echo "ERROR: could not determine environment." >&2
+    echo >&2
+    show_help >&2
+    exit 2
+fi
+
+PYTHON_BIN="$(python_for_env "$ENV_NAME")"
+
+if [[ ! -x "$PYTHON_BIN" ]]; then
+    echo "ERROR: Python for environment '$ENV_NAME' not found or not executable:" >&2
+    echo "  $PYTHON_BIN" >&2
+    exit 1
+fi
+
+if [[ ! -f "$SCRIPT" ]]; then
+    echo "ERROR: script not found:" >&2
+    echo "  $SCRIPT" >&2
+    exit 1
+fi
+
+exec "$PYTHON_BIN" "$SCRIPT" "$@"

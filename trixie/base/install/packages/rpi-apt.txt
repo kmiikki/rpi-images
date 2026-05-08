@@ -1,6 +1,7 @@
 rpicam-apps
 python3-picamera2
 python3-libcamera
+python3-opencv
 v4l-utils
 qt6-wayland
 i2c-tools

@@ -46,7 +46,7 @@ application-specific rationale is in the Scientific Imaging repository at
 does not apply to all data loggers or other laboratory applications.
 
 See the [installation guide](base/README.md) and the
-[reference-installation finalization report](base/docs/trixie-model-finalization-20261114.md),
+[lab314 installation, maintenance and recovery](base/docs/lab314-maintenance.md).
 which records the approved lab314 production versions and acceptance results.
 
 `rpi-share` and legacy `/opt/lab` tools retain their current paths; they are not

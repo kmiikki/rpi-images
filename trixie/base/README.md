@@ -654,8 +654,3 @@ Use full uninstall with care. It removes `/opt/lab314`, `/opt/rpi`, and
 - Raspberry Pi APT Python modules are used only through `/usr/bin/python3` or `/opt/rpi`
 - `/opt/lab314` remains a clean analysis environment
 
-## Model release preparation
-
-See [the finalization report](docs/trixie-model-finalization-20261114.md) for
-scoped checks, upstream artifact availability and the pending clean-card test.
-No OS upgrade, environment rebuild, commit or push was performed in that task.

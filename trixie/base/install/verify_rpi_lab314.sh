@@ -1,55 +1,15 @@
 #!/usr/bin/env bash
 set -euo pipefail
-
-ENV_PREFIX="/opt/lab314"
-
-if [[ ! -x "${ENV_PREFIX}/bin/python" ]]; then
-    echo "ERROR: ${ENV_PREFIX}/bin/python not found or not executable" >&2
-    exit 1
+here=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+prefix=/opt/lab314
+if [[ ${1:-} == --prefix && $# == 2 ]]; then prefix=$2; elif (($#)); then echo "Usage: $0 [--prefix PREFIX]" >&2; exit 2; fi
+"$prefix/bin/python" -IB "$here/check_lab314.py" --prefix "$prefix" --contract "$here/../config/lab314/packages.json" --functional
+if [[ -x /opt/rpi/bin/python3 ]]; then
+    /opt/rpi/bin/python3 -B -c 'import sys,cv2,picamera2,libcamera; print("rpi preserved",sys.executable,cv2.__version__)'
 fi
-
-echo "==> Verifying lab314 environment: ${ENV_PREFIX}"
-
-"${ENV_PREFIX}/bin/python" - <<'EOF'
-import sys
-import spyder_kernels
-import numpy
-import pandas
-import matplotlib
-import scipy
-import skimage
-import cv2
-import serial
-
-print("Executable:", sys.executable)
-print("Python:", sys.version.split()[0])
-print("spyder-kernels:", spyder_kernels.__version__)
-print("numpy:", numpy.__version__)
-print("pandas:", pandas.__version__)
-print("matplotlib:", matplotlib.__version__)
-print("scipy:", scipy.__version__)
-print("skimage:", skimage.__version__)
-print("cv2:", cv2.__version__)
-print("cv2 file:", cv2.__file__)
-print("serial:", serial.VERSION)
-print("serial file:", serial.__file__)
-EOF
-
-echo
-echo "==> Camera quick checks using system tools"
-if command -v rpicam-hello >/dev/null 2>&1; then
-    rpicam-hello --list-cameras || true
-else
-    echo "WARNING: rpicam-hello not found"
+if [[ -x /opt/sci/bin-rpi/cam-imgcheck ]]; then
+    . /opt/conda/etc/profile.d/conda.sh
+    conda activate "$prefix"
+    /opt/sci/bin-rpi/cam-imgcheck --version
 fi
-
-/usr/bin/python3 - <<'EOF'
-try:
-    from picamera2 import Picamera2
-    print("system picamera2 OK")
-except Exception as e:
-    print("system picamera2 check failed:", e)
-EOF
-
-echo
-echo "RPi lab314 verification complete."
+echo 'GUI, interactive selectROI and the Spyder desktop require separate acceptance.'

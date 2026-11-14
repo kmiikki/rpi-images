@@ -1,6 +1,7 @@
 # Raspberry Pi `rpi` Environment
 
-`/opt/rpi` is an optional Raspberry Pi hardware bridge environment.
+`/opt/rpi` is an optional Raspberry Pi hardware bridge environment. Current
+Trixie uses Python 3.13 here, separate from lab314 Python 3.14.10.
 
 It is used when Python scripts need Raspberry Pi OS APT Python modules such as:
 
@@ -10,6 +11,8 @@ It is used when Python scripts need Raspberry Pi OS APT Python modules such as:
 - smbus2 / I2C
 - RPi.GPIO
 - gpiod
+- SPI / spidev (APT module; present in the current test system)
+- serial / pyserial
 
 ---
 
@@ -74,11 +77,22 @@ Create `/opt/rpi` only when Raspberry Pi hardware Python modules are needed:
 
 ```bash
 cd trixie/base
-./install/create_rpi_env.sh
-./install/verify_rpi_env.sh
+sudo bash install/create_rpi_env.sh
+bash install/verify_rpi_env.sh
 ```
 
-The environment is not autoactivated by default.
+Run the create step only for a new prefix: the current script rejects an
+existing `/opt/rpi`. Camera machines need it before installing Picamera2-based
+Scientific Imaging applications; data loggers without these bindings can omit it.
+The HOME/AALTO default remains unchanged. Their existing `--with-cam-imgcheck
+SCIENTIFIC_IMAGING` choice creates a missing hardware prefix in the current
+sequence; do not create it a second time after that choice.
+
+The environment is not autoactivated by default. Installed camera scripts
+select `/opt/rpi/bin/python3` by their existing shebang. Do not add Python 3.14
+native modules to this interpreter or Debian dist-packages to `/opt/lab314`.
+The read-only model check found all listed module specs in the current
+production prefix, including spidev. This does not replace I/O hardware tests.
 
 ---
 
@@ -87,7 +101,7 @@ The environment is not autoactivated by default.
 Run:
 
 ```bash
-./install/verify_rpi_env.sh
+bash install/verify_rpi_env.sh
 ```
 
 Expected signs of success:

@@ -3,7 +3,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PKG_DIR="${SCRIPT_DIR}/packages"
-DO_APT_UPGRADE="${DO_APT_UPGRADE:-1}"
+DO_APT_UPGRADE="${DO_APT_UPGRADE:-0}"
 
 need_root() {
     [[ "${EUID}" -eq 0 ]] || { echo "Run as root: sudo $0" >&2; exit 1; }
@@ -24,19 +24,9 @@ install_apt_list() {
 }
 
 setup_lab_dirs_and_path() {
-    mkdir -p /opt/lab/bin /opt/lab/share /opt/lab/apps /opt/lab/install /opt/lab/logs
-    chmod 755 /opt/lab /opt/lab/bin /opt/lab/share /opt/lab/apps /opt/lab/install /opt/lab/logs
-
-    cat >/etc/profile.d/lab-path.sh <<'EOF'
-if [ -d /opt/lab/bin ]; then
-  case ":$PATH:" in
-    *":/opt/lab/bin:"*) ;;
-    *) PATH="/opt/lab/bin:$PATH" ;;
-  esac
-fi
-export PATH
-EOF
-    chmod 644 /etc/profile.d/lab-path.sh
+    install -d -m 755 /opt/sci /opt/sci/bin /opt/sci/bin-rpi /opt/sci/lib
+    # Existing /opt/lab and its profile snippet may still serve older tools.
+    install -m 644 "$SCRIPT_DIR/sci-path.sh" /etc/profile.d/sci-path.sh
 }
 
 setup_passwordless_sudo_for_invoking_user() {

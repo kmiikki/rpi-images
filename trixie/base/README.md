@@ -1,8 +1,9 @@
 # Trixie Base (lab-install)
 
-This profile provides a reproducible laboratory environment for Raspberry Pi OS
-(Debian Trixie), with a standard analysis environment and optional Raspberry Pi
-hardware support.
+This profile provides the common laboratory environment for **Raspberry Pi OS
+Trixie Full, 64-bit**: cameras, data loggers and other research instruments.
+Production cards are at least **128 GB**. The clean-install acceptance will use
+a separate Pi and a 64 GB test card first. It is not performed on the running Pi.
 
 ---
 
@@ -10,7 +11,8 @@ hardware support.
 
 Creates and manages:
 
-- `/opt/lab314`: clean Python 3.14 analysis environment
+- `/opt/conda`: existing Miniforge/Conda bootstrap
+- `/opt/lab314`: locked Python 3.14.10 / OpenCV 5.0.0 analysis environment
 - optional `/opt/rpi`: Raspberry Pi hardware bridge environment
 - `envrun`: launcher for running Python scripts in a selected environment
 - Spyder integration with external Spyder and environment-specific kernels
@@ -31,7 +33,11 @@ Key design goals:
 
 ### lab314
 
-`/opt/lab314` is the default clean analysis environment.
+`/opt/lab314` is the default clean analysis environment: **Python 3.14.10,
+OpenCV 5.0.0, Shapely 2.2.0 / GEOS 3.14.1 and 145 pinned distributions**.
+The accepted deployment passed 103 tests, 0 failures and 0 skips; see the
+[current production result](docs/lab314/production-final-result-20261114.md).
+Earlier failed attempts remain historical reports and are not the current state.
 
 Use it for:
 
@@ -68,6 +74,8 @@ Use it for scripts that need Raspberry Pi OS APT Python modules, for example:
 - libcamera
 - APT OpenCV (`python3-opencv`)
 - GPIO
+- SPI / `spidev` (APT module; present in the current test system)
+- serial / `pyserial`
 - I2C / `smbus2`
 - `gpiod`
 - other Raspberry Pi OS hardware bindings
@@ -78,7 +86,8 @@ Interpreter:
 /opt/rpi/bin/python
 ```
 
-`/opt/rpi` uses the same Python minor version as `/usr/bin/python3` and sees:
+`/opt/rpi` uses the same Python minor version as `/usr/bin/python3`
+(current Trixie: **Python 3.13**) and sees:
 
 ```text
 /usr/lib/python3/dist-packages
@@ -206,18 +215,29 @@ base/
 
 ## Installation
 
+Download this repository with Git, or download and extract its GitHub ZIP.
+The scripts use their own directory to locate `config/`, `tools/` and other
+scripts; `.git`, Niobium files and T9 archives are not runtime requirements.
+Keep the whole directory tree together. Review the existing `pre_home.sh` /
+`pre_aalto.sh` account, NTP and SSH policy before provisioning. Their existing
+profile defaults are retained; `PRIMARY_USER` can be supplied explicitly.
+This step provisions the OS and accounts: do not rerun the full profile just
+to update an application. A full APT upgrade still requires the existing
+`DO_APT_UPGRADE=1` selection; it is not enabled by this documentation.
+
+
 ### Raspberry Pi (home)
 
 ```bash
 cd install
-sudo ./run_rpi_home.sh
+sudo bash run_rpi_home.sh
 ```
 
 ### Raspberry Pi (Aalto)
 
 ```bash
 cd install
-sudo ./run_rpi_aalto.sh
+sudo bash run_rpi_aalto.sh
 ```
 
 Use only one Raspberry Pi profile.
@@ -230,22 +250,34 @@ APT base packages
 /opt/lab314
 lab314 autoactivation
 envrun
-/opt/lab/bin PATH support
+/opt/sci/bin and /opt/sci/bin-rpi PATH support
 ```
 
-It does not automatically create `/opt/rpi`.
+By default the base profiles omit the hardware environment and applications. For a fresh installation, select cam-imgcheck before provisioning with `sudo bash run_rpi_home.sh --with-cam-imgcheck /path/to/scientific-imaging` (or the Aalto script). For an existing Pi, use the application-only step. [Application installation and rollback](docs/sci-apps.md)
 
 ---
 
-### Optional Raspberry Pi hardware environment
+### Kamerakoneen laitteistoympäristö
 
-Create `/opt/rpi` only when Raspberry Pi hardware Python modules are needed:
+The default HOME/AALTO profile omits `/opt/rpi`. For a **new camera machine**,
+create it after the base profile and before Scientific Imaging camera apps:
 
 ```bash
-cd install
-./create_rpi_env.sh
-./verify_rpi_env.sh
+# From trixie/base/install; only when /opt/rpi does not exist:
+sudo bash create_rpi_env.sh
+bash verify_rpi_env.sh
 ```
+
+An existing `/opt/rpi` is verified, not recreated. The script currently refuses
+an existing prefix. Do not remove a working environment to rerun it.
+`/opt/rpi` is not autoactivated by default. Use direct `/opt/rpi/bin/python3`
+shebangs for installed camera applications. Preserve `envrun` for its existing
+workflows; no new application wrappers are created.
+
+The existing `--with-cam-imgcheck SCIENTIFIC_IMAGING` choice creates a missing
+`/opt/rpi` at its current point in the HOME/AALTO sequence and runs the pilot
+installer. If using that choice, do not separately recreate `/opt/rpi`.
+See [hardware environment details](docs/rpi-env.md).
 
 Use `/opt/rpi` for:
 
@@ -260,27 +292,55 @@ Use `/opt/rpi` for:
 
 ### Ubuntu
 
-```bash
-cd install
-./run_ubuntu_lab314.sh
-```
-
-Ubuntu does not autoactivate `lab314`.
-
-Ubuntu uses a separate micromamba-based `lab314` environment rather than the
-Raspberry Pi `/opt/lab314` prefix model.
+The old `run_ubuntu_lab314.sh` and related scripts remain in this repository
+unchanged as the earlier Ubuntu implementation. They are not the installation
+route for the current Scientific Imaging stack: Ubuntu applications use the
+separate Scientific Python V4-r5.2 **science** environment and its existing
+Micromamba root. This Trixie task does not update or merge those installers.
 
 ---
 
+## Scientific Imaging applications and build dependencies
+
+The model installation owns OS/APT and Python environment provisioning.
+The current Scientific Imaging repository owns application installation,
+diagnostics, update and removal under `/opt/sci/{bin,bin-rpi,lib}`.
+After provisioning `/opt/rpi` on a camera machine, use that repository's
+`scripts/install/01-install.sh`, for example `--app vrecorder-full-rpi.py
+--app cam-preview`, then its `02-diagnose.sh`. Read its
+application guide `docs/installation/SCIENTIFIC_IMAGING_APPS.md`
+from the matching Scientific Imaging source release. That separate local
+repository has not been assigned a public remote here; no publication URL
+is invented by this model installer.
+
+This repository's `install_sci_apps.sh`, `verify_sci_apps.sh`, `sci_payload.py`
+and shebang tool are the existing **cam-imgcheck 0.1.2 pilot**. Scientific
+Imaging reused that payload engine and added its catalogue, lifecycle and
+native packaging. Both copies remain: neither was replaced, removed or merged.
+Avoid managing the same app with both installers. The newer installer can
+verify an external pilot but does not silently adopt its ownership.
+See [pilot details and division of responsibility](docs/sci-apps.md).
+
+`common-apt.txt` already provides `build-essential` and `pkg-config`.
+`rpi-apt.txt` now explicitly includes the 11 proven Meson/Ninja, libcamera,
+Boost, image-format and DRM/EGL development packages for cam-preview.
+The application installer checks them and never installs OS packages.
+Qt/TFLite/Hailo/OpenCV-C++ or experimental-storage development libraries are
+not added without a requirement from the selected preview build.
+Keep the official Raspberry Pi APT source: its tested libcamera candidate is
+0.8.0; do not force Debian's older 0.4.0 or pin APT versions here.
+
+VRecorder Full RPi requires **ext4 for persistent video recording**. Its final
+metadata publication uses a hard link, which exFAT lacks; temporary/candidate
+and published files must stay on the same filesystem. This is not a blanket
+filesystem rule for data loggers. See its
+technical filesystem document in the Scientific Imaging repository:
+`docs/architecture/VRECORDER_STORAGE_FILESYSTEM_RPI_LINUX.md`.
+No formatting or exFAT adapter is performed by the model installer.
+
 ## PATH and Tools
 
-The following directory is added to PATH:
-
-```text
-/opt/lab/bin
-```
-
-This is the standard location for user-facing lab tools.
+The Pi base profile adds `/opt/sci/bin` and `/opt/sci/bin-rpi`. Ubuntu retains its existing `/opt/lab/bin` convention. Existing Pi installations can keep their legacy commands. Application-private modules live below `/opt/sci/lib`.
 
 `envrun` is installed to:
 
@@ -377,14 +437,14 @@ Install:
 
 ```bash
 cd install
-sudo ./install_optional_wolfram.sh
+sudo bash install_optional_wolfram.sh
 ```
 
 Uninstall:
 
 ```bash
 cd install
-sudo ./uninstall_optional_wolfram.sh
+sudo bash uninstall_optional_wolfram.sh
 ```
 
 See:
@@ -395,11 +455,36 @@ docs/wolfram.md
 
 ---
 
-## Logs
+## Locked inputs, caches and logs
 
-```text
-/opt/lab/logs
+`config/lab314/conda-linux-aarch64.txt` contains 23 explicit ARM64/noarch Conda
+artifacts with MD5 digests. `wheels.txt` contains 144 fixed wheel URLs with
+SHA-256 hashes. `packages.json` is the exact 145-distribution contract,
+including Conda's pip. The existing installer uses binary wheels only,
+`--require-hashes` and `--no-deps`; it never resolves a new scientific stack.
+
+Before installation, from `trixie/base`:
+
+```bash
+(cd config/lab314 && sha256sum -c SHA256SUMS)
 ```
+
+The manifest checks the three shipped lock/contract files; it is not a digital
+signature. The per-artifact digests remain the installer's existing check.
+All downloads use public Conda/PyPI/piwheels sources, without private copies.
+The Miniforge bootstrap keeps its current GitHub `latest` source; scientific
+package versions are fixed by the environment locks, not by that bootstrap.
+
+Conda's build cache and TMPDIR use `/opt/.lab314-build.*` next to the new prefix;
+the EXIT trap removes them. Pip's persistent cache is disabled. A failed prefix
+is retained for diagnosis. This intentional install workload needs temporary
+space in addition to the final environment and is not moved into RAM.
+Small test inputs should use a capacity-checked `/dev/shm`; never assume every
+Pi has tmpfs `/tmp`. Installer output goes to the caller's terminal; there is
+no general installer log directory created at `/opt/lab/logs`.
+
+The [current lab314 documentation](docs/lab314/README.md) retains comparison
+and recovery history, and links the final accepted production result.
 
 ---
 
@@ -408,7 +493,10 @@ docs/wolfram.md
 ### Shell syntax
 
 ```bash
-bash -n install/*.sh bin/envrun && echo "Shell syntax OK"
+for script in install/*.sh bin/envrun bin/rpi-share; do
+    bash -n "$script" || exit
+done
+echo "Shell syntax OK"
 ```
 
 This checks Bash syntax only. It does not execute the install or uninstall
@@ -419,7 +507,7 @@ commands.
 ### lab314 on Raspberry Pi
 
 ```bash
-./install/verify_rpi_lab314.sh
+bash install/verify_rpi_lab314.sh
 ```
 
 Manual quick test:
@@ -444,7 +532,7 @@ Expected interpreter:
 If `/opt/rpi` has been created:
 
 ```bash
-./install/verify_rpi_env.sh
+bash install/verify_rpi_env.sh
 ```
 
 Expected signs of success:
@@ -486,9 +574,9 @@ envrun rpi /tmp/envrun_test.py
 ```text
 /opt/lab314:
   pip opencv-python
-  Python 3.14
+  Python 3.14.10 / OpenCV 5.0.0
   isolated from system Python
-  needs the OpenCV Qt font fix
+  current installer already sets up DejaVu font links and xcb sitecustomize
 
 /opt/rpi:
   APT python3-opencv
@@ -512,14 +600,14 @@ docs/rpi-env.md
 
 ```bash
 cd install
-./uninstall_rpi_env.sh
+sudo bash uninstall_rpi_env.sh
 ```
 
 ### Remove envrun only
 
 ```bash
 cd install
-./uninstall_envrun.sh
+sudo bash uninstall_envrun.sh
 ```
 
 ### Full Raspberry Pi uninstall
@@ -528,14 +616,14 @@ Home profile:
 
 ```bash
 cd install
-./run_uninstall_rpi_home.sh
+sudo bash run_uninstall_rpi_home.sh
 ```
 
 Aalto profile:
 
 ```bash
 cd install
-./run_uninstall_rpi_aalto.sh
+sudo bash run_uninstall_rpi_aalto.sh
 ```
 
 Optional flags:
@@ -559,3 +647,9 @@ Use full uninstall with care. It removes `/opt/lab314`, `/opt/rpi`, and
 - analysis and hardware environments are separated
 - Raspberry Pi APT Python modules are used only through `/usr/bin/python3` or `/opt/rpi`
 - `/opt/lab314` remains a clean analysis environment
+
+## Model release preparation
+
+See [the finalization report](docs/trixie-model-finalization-20261114.md) for
+scoped checks, upstream artifact availability and the pending clean-card test.
+No OS upgrade, environment rebuild, commit or push was performed in that task.

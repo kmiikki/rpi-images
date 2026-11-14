@@ -12,3 +12,16 @@ python3-libgpiod
 gpiod
 spyder
 python3-spyder-kernels
+
+# Scientific Imaging cam-preview: current Meson/Ninja build (DRM/EGL).
+libcamera-dev
+meson
+ninja-build
+libboost-program-options-dev
+libexif-dev
+libjpeg-dev
+libtiff-dev
+libpng-dev
+libdrm-dev
+libx11-dev
+libepoxy-dev

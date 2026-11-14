@@ -2,35 +2,67 @@
 set -euo pipefail
 here=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 prefix=/opt/lab314
+mode=normal
+selected=()
+plan=0
 while (($#)); do
     case "$1" in
+        --package) selected+=(--package "$2"); shift 2 ;;
+        --plan) plan=1; shift ;;
+        --snapshot) mode=snapshot; shift ;;
         --prefix) prefix=$2; shift 2 ;;
-        --help) echo "Usage: $0 [--prefix ABSOLUTE_NEW_PREFIX]"; exit 0 ;;
+        --help) echo "Usage: $0 [--prefix ABSOLUTE_NEW_PREFIX] [--snapshot] [--package REQUIREMENT ...] [--plan]"; exit 0 ;;
         *) echo "Unknown option: $1" >&2; exit 2 ;;
     esac
 done
 [[ $prefix == /* && $(realpath -m -- "$prefix") == "$prefix" ]] || { echo 'Noncanonical prefix' >&2; exit 2; }
-[[ $(uname -m) == aarch64 || $(uname -m) == arm64 ]] || { echo 'This lock targets Linux ARM64' >&2; exit 2; }
+[[ $(uname -m) == aarch64 || $(uname -m) == arm64 ]] || { echo 'This installer targets Linux ARM64' >&2; exit 2; }
 contract="$here/../config/lab314/packages.json"
-check() { "$prefix/bin/python" -IB "$here/check_lab314.py" --prefix "$prefix" --contract "$contract" "$@"; }
-if [[ -e $prefix || -L $prefix ]]; then
-    if [[ -x $prefix/bin/python ]] && check; then
-        echo "KEEP $prefix"
-        exit 0
-    fi
-    echo "Existing prefix differs or is incomplete. Choose a new --prefix; no files replaced." >&2
-    exit 1
+check() {
+    local flags=()
+    [[ $mode != snapshot ]] || flags+=(--snapshot)
+    "$prefix/bin/python" -IB "$here/check_lab314.py" --prefix "$prefix" --contract "$contract" "${flags[@]}" "$@"
+}
+if [[ $mode == snapshot ]]; then
+    (cd "$here/../config/lab314" && sha256sum -c SHA256SUMS)
 fi
+if [[ -e $prefix || -L $prefix ]]; then
+    [[ -x $prefix/bin/python && -d $prefix/conda-meta ]] || { echo 'Existing prefix is incomplete; no files replaced.' >&2; exit 1; }
+    if [[ $mode == snapshot ]]; then
+        ((${#selected[@]} == 0 && plan == 0)) || { echo 'Snapshot mode does not update packages.' >&2; exit 2; }
+        check
+        echo "KEEP exact snapshot $prefix"
+    else
+        update=("${selected[@]}")
+        ((${#update[@]})) || update=(--all)
+        if ((plan)); then
+            "$prefix/bin/python" -IB "$here/update_lab314.py" --prefix "$prefix" "${update[@]}"
+        else
+            # Small persistent operation records, never a replacement environment.
+            records=$(mktemp -d -- "$(dirname -- "$prefix")/.lab314-update.XXXXXXXX")
+            TMPDIR="$records" "$prefix/bin/python" -IB "$here/update_lab314.py" --prefix "$prefix" "${update[@]}" --apply --record-dir "$records/state"
+            echo "Update completed; records: $records/state"
+        fi
+    fi
+    exit 0
+fi
+((${#selected[@]} == 0 && plan == 0)) || { echo 'Targeted updates/plans require an existing prefix.' >&2; exit 2; }
 [[ -d $(dirname -- "$prefix") && -x /opt/conda/bin/conda ]] || { echo 'Missing parent or Conda' >&2; exit 2; }
 # Keep caches with the selected installation filesystem, never base's cache.
 mkdir -m 700 -- "$prefix"
 work=$(mktemp -d -- "$(dirname -- "$prefix")/.lab314-build.XXXXXXXX")
 trap 'rm -rf -- "$work"' EXIT
 export CONDA_PKGS_DIRS="$work/conda-pkgs" TMPDIR="$work" PIP_NO_CACHE_DIR=1 PIP_DISABLE_PIP_VERSION_CHECK=1 PYTHONDONTWRITEBYTECODE=1 OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1
-if ! /opt/conda/bin/conda create -y --no-default-packages -p "$prefix" --file "$here/../config/lab314/conda-linux-aarch64.txt"; then
-    echo "Failed prefix retained at $prefix for diagnosis" >&2; exit 1
+if [[ $mode == snapshot ]]; then
+    /opt/conda/bin/conda create -y --no-default-packages -p "$prefix" --file "$here/../config/lab314/conda-linux-aarch64.txt"
+    "$prefix/bin/python" -m pip install --only-binary=:all: --require-hashes --no-deps -r "$here/../config/lab314/wheels.txt"
+else
+    # Resolve the direct product requirements, not the historical transitive set.
+    /usr/bin/python3 -B "$here/lab314_policy.py" > /dev/null
+    mapfile -t conda_specs < <(/usr/bin/python3 -c 'import json,sys;print("\n".join(json.load(open(sys.argv[1]))["conda"]))' "$here/../config/lab314/requirements.json")
+    /opt/conda/bin/conda create -y --no-default-packages --override-channels -c conda-forge -p "$prefix" "${conda_specs[@]}"
+    "$prefix/bin/python" -B "$here/update_lab314.py" --initialize --apply --record-dir "$work/initial-install"
 fi
-"$prefix/bin/python" -m pip install --only-binary=:all: --require-hashes --no-deps -r "$here/../config/lab314/wheels.txt"
 # OpenCV wheel declares this font directory but does not bundle it.
 site="$prefix/lib/python3.14/site-packages"
 mkdir -p "$site/cv2/qt/fonts"

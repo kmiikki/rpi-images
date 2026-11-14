@@ -1,4 +1,4 @@
-"""Exact package contract and camera-free functional checks for lab314."""
+"""Compatibility checks by default; exact historical versions only with --snapshot."""
 import argparse
 import importlib
 import importlib.metadata as md
@@ -6,30 +6,45 @@ import json
 import os
 from pathlib import Path
 import platform
+import re
 import subprocess
 import sys
 import tempfile
 
 parser = argparse.ArgumentParser(description=__doc__)
-parser.add_argument('--contract', type=Path, required=True)
+parser.add_argument('--contract', type=Path, default=Path(__file__).resolve().parents[1]/'config/lab314/packages.json')
+parser.add_argument('--snapshot', action='store_true')
 parser.add_argument('--prefix', type=Path, required=True)
 parser.add_argument('--functional', action='store_true')
 args = parser.parse_args()
-contract = json.loads(args.contract.read_text())
+contract = json.loads(args.contract.read_text()) if args.snapshot else None
 errors = []
 if Path(sys.prefix).resolve() != args.prefix.resolve():
     errors.append(f'prefix {sys.prefix} != {args.prefix}')
-if platform.python_version() != '3.14.10':
-    errors.append('Python '+platform.python_version()+' != 3.14.10')
+if errors:sys.exit('\n'.join(errors))
+sys.path.insert(0,str(Path(__file__).resolve().parent))
+from lab314_policy import version_errors, policy
+versions={d.metadata['Name']:d.version for d in md.distributions()}
+if args.snapshot:
+    # Keep --contract support for exact snapshot diagnostics.
+    if platform.python_version()!=contract['python']:errors.append('Snapshot Python version differs')
+    for name,expected in contract['packages'].items():
+        try:found=md.version(name)
+        except md.PackageNotFoundError:found='MISSING'
+        if found!=expected:errors.append(name+': snapshot version differs: '+found)
+else:
+    try:errors.extend(version_errors(versions,platform.python_version()))
+    except ValueError as exc:errors.append(str(exc))
+    for module in policy()['pip'].values():
+        try:importlib.import_module(module)
+        except Exception as exc:errors.append(module+': '+str(exc))
+    if not errors:
+        cv=importlib.import_module('cv2')
+        gui=re.search(r'GUI:\s*(\S+)',cv.getBuildInformation())
+        if not gui or gui[1].upper() in ('NONE','NO'):
+            errors.append('OpenCV must provide a graphical Linux backend')
 if '/usr/lib/python3/dist-packages' in sys.path:
     errors.append('Debian dist-packages leaks into lab314')
-for name, expected in contract['packages'].items():
-    try:
-        found = md.version(name)
-    except md.PackageNotFoundError:
-        found = 'MISSING'
-    if found != expected:
-        errors.append(f'{name}: {found} != {expected}')
 for font in ('DejaVuSans.ttf', 'DejaVuSans-Bold.ttf'):
     path = Path(sys.prefix)/'lib/python3.14/site-packages/cv2/qt/fonts'/font
     if not path.is_file():
@@ -37,7 +52,7 @@ for font in ('DejaVuSans.ttf', 'DejaVuSans-Bold.ttf'):
 if errors:
     sys.exit('\n'.join(errors))
 subprocess.run([sys.executable, '-B', '-m', 'pip', 'check'], check=True)
-print('PASS exact package versions, Python, prefix, isolation')
+print('PASS', 'exact snapshot' if args.snapshot else 'compatible requirements', 'Python, prefix, isolation')
 if not args.functional:
     sys.exit(0)
 
@@ -100,7 +115,8 @@ with tempfile.TemporaryDirectory(prefix='lab314-check-') as tmp:
         filename = str(root/('image.'+suffix))
         assert cv2.imwrite(filename, im)
         assert cv2.imread(filename).shape == im.shape
-    assert cv2.__version__ == '5.0.0'
+    assert cv2.getBuildInformation()  # Distribution identity is checked above.
+    if args.snapshot:assert cv2.__version__==contract['opencv']
     assert skimage.filters.sobel(im[:, :, 0]).shape == (48, 64)
     assert cv2.contourArea(np.array(p.exterior.coords[:-1], dtype=np.float32)) == p.area
     for codec in ('FFV1', 'MJPG'):

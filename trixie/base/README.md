@@ -2,8 +2,7 @@
 
 This profile provides the common laboratory environment for **Raspberry Pi OS
 Trixie Full, 64-bit**: cameras, data loggers and other research instruments.
-Production cards are at least **128 GB**. The clean-install acceptance will use
-a separate Pi and a 64 GB test card first. It is not performed on the running Pi.
+
 
 ---
 
@@ -12,7 +11,7 @@ a separate Pi and a 64 GB test card first. It is not performed on the running Pi
 Creates and manages:
 
 - `/opt/conda`: existing Miniforge/Conda bootstrap
-- `/opt/lab314`: locked Python 3.14.10 / OpenCV 5.0.0 analysis environment
+- `/opt/lab314`: rolling Python 3.14 scientific environment with GUI opencv-python
 - optional `/opt/rpi`: Raspberry Pi hardware bridge environment
 - `envrun`: launcher for running Python scripts in a selected environment
 - Spyder integration with external Spyder and environment-specific kernels
@@ -33,11 +32,16 @@ Key design goals:
 
 ### lab314
 
-`/opt/lab314` is the default clean analysis environment: **Python 3.14.10,
-OpenCV 5.0.0, Shapely 2.2.0 / GEOS 3.14.1 and 145 pinned distributions**.
-The accepted deployment passed 103 tests, 0 failures and 0 skips; see the
-[current production result](docs/lab314/production-final-result-20261114.md).
-Earlier failed attempts remain historical reports and are not the current state.
+`/opt/lab314` is the default clean analysis environment. Normal installation
+resolves current compatible direct requirements, keeps Python within 3.14,
+and preserves the GUI `opencv-python` distribution. Compatible maintenance
+updates are accepted by normal verification. Spyder-kernel compatibility follows
+the selected external IDE's metadata, not a permanently fixed IDE version.
+
+The historical November 2026 snapshot (Python 3.14.10, OpenCV 5.0.0,
+Shapely 2.2.0 / GEOS 3.14.1, 145 distributions) remains available explicitly
+with `--snapshot`. Its prior 103 PASS acceptance is historical evidence, not
+an instruction to reject valid updates. See [maintenance and recovery](docs/lab314-maintenance.md).
 
 Use it for:
 
@@ -257,7 +261,7 @@ By default the base profiles omit the hardware environment and applications. For
 
 ---
 
-### Kamerakoneen laitteistoympäristö
+### Camera-system hardware environment
 
 The default HOME/AALTO profile omits `/opt/rpi`. For a **new camera machine**,
 create it after the base profile and before Scientific Imaging camera apps:
@@ -455,36 +459,38 @@ docs/wolfram.md
 
 ---
 
-## Locked inputs, caches and logs
+## Requirements, optional snapshots, caches and logs
 
-`config/lab314/conda-linux-aarch64.txt` contains 23 explicit ARM64/noarch Conda
-artifacts with MD5 digests. `wheels.txt` contains 144 fixed wheel URLs with
-SHA-256 hashes. `packages.json` is the exact 145-distribution contract,
-including Conda's pip. The existing installer uses binary wheels only,
-`--require-hashes` and `--no-deps`; it never resolves a new scientific stack.
+Normal installation uses `config/lab314/requirements.json`, the maintained
+direct dependency specification. Conda provides Python 3.14, pip and packaging;
+pip resolves scientific binary wheels from the existing PyPI/piwheels sources.
+No transitive versions are permanently frozen. The kernel compatibility range
+is read from the selected external IDE metadata. Rerunning the normal installer updates an existing prefix to the latest
+compatible packages. A current environment completes without package changes;
+it is never recreated. Targeted updates are explicit optional selections.
 
-Before installation, from `trixie/base`:
-
-```bash
-(cd config/lab314 && sha256sum -c SHA256SUMS)
+```sh
+# From trixie/base/install: normal installation and verification
+sudo bash create_lab314_env.sh
+bash verify_rpi_lab314.sh
+# Historical snapshot: only in a new vacant prefix
+sudo bash create_lab314_env.sh --snapshot --prefix /absolute/new/lab314-snapshot
+bash verify_rpi_lab314.sh --snapshot --prefix /absolute/new/lab314-snapshot
 ```
 
-The manifest checks the three shipped lock/contract files; it is not a digital
-signature. The per-artifact digests remain the installer's existing check.
-All downloads use public Conda/PyPI/piwheels sources, without private copies.
-The Miniforge bootstrap keeps its current GitHub `latest` source; scientific
-package versions are fixed by the environment locks, not by that bootstrap.
+The original `conda-linux-aarch64.txt`, `wheels.txt`, `packages.json` and
+`SHA256SUMS` are retained unchanged for snapshot mode. Snapshot installation
+checks their hashes and exact versions. Normal installation does not use their
+version selection. The Miniforge bootstrap and hardware environment are unchanged.
 
-Conda's build cache and TMPDIR use `/opt/.lab314-build.*` next to the new prefix;
-the EXIT trap removes them. Pip's persistent cache is disabled. A failed prefix
-is retained for diagnosis. This intentional install workload needs temporary
-space in addition to the final environment and is not moved into RAM.
-Small test inputs should use a capacity-checked `/dev/shm`; never assume every
-Pi has tmpfs `/tmp`. Installer output goes to the caller's terminal; there is
-no general installer log directory created at `/opt/lab/logs`.
+Conda build caches remain next to the new prefix, removed by the EXIT trap;
+pip's persistent cache is disabled. A failed prefix is retained for diagnosis.
+Updates use temporary plans and explicit apply records. They are not transactional;
+take a full external backup before applying them. Use capacity-checked `/dev/shm`
+for small Pi tests, without assuming `/tmp` is RAM. No general installer log
+directory is created at `/opt/lab/logs`.
 
-The [current lab314 documentation](docs/lab314/README.md) retains comparison
-and recovery history, and links the final accepted production result.
+See [targeted pip/Conda updates, security fixes, independent Spyder IDE maintenance and recovery](docs/lab314-maintenance.md).
 
 ---
 
@@ -574,7 +580,7 @@ envrun rpi /tmp/envrun_test.py
 ```text
 /opt/lab314:
   pip opencv-python
-  Python 3.14.10 / OpenCV 5.0.0
+  Python 3.14 maintenance series / compatible GUI opencv-python
   isolated from system Python
   current installer already sets up DejaVu font links and xcb sitecustomize
 

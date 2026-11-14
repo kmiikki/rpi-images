@@ -24,7 +24,7 @@ apt install spyder python3-spyder-kernels
 Environment package:
 
 ```text
-spyder-kernels==3.0.5
+spyder-kernels (range declared by the selected external Spyder IDE)
 ```
 
 The matching interpreter is:
@@ -58,7 +58,7 @@ Use the following Python interpreter
 On Ubuntu:
 
 * Spyder is kept in a separate `tools` environment
-* `lab314` only contains Python packages and `spyder-kernels`
+* the current Scientific Python installation uses `science` for scientific packages and its kernel; older Ubuntu lab314 examples below describe the legacy installer
 
 Typical setup:
 
@@ -111,17 +111,21 @@ Advantages:
 
 This is especially useful because Raspberry Pi and Ubuntu may use different Spyder versions.
 
-Current known versions:
+The historical Pi acceptance used Spyder 6.0.5 with kernel 3.0.5.
+This is not a permanent constraint or a claim that 6.0.5 is the latest IDE.
+The targeted update scenario moves from IDE 6.0.5 to 6.1.8 and from kernel
+range `>=3.0.3,<3.1.0` to `>=3.1.0,<3.2.0`, allowing kernel 3.1.7.
+Actual requirements come from the selected installed IDE's metadata.
 
-```text
-Raspberry Pi:
-    Spyder 6.0.5
-    spyder-kernels 3.0.5
+The IDE can now be installed/updated independently in an administrator-selected
+external Conda prefix using `update_lab314.py --ide-prefix`. APT Spyder remains
+a fallback. Launch the IDE's existing `bin/spyder` directly and select its
+`bin/python` with `LAB314_SPYDER_PYTHON` for kernel maintenance. No application
+wrapper or new fixed installation path is introduced.
 
-Ubuntu:
-    Spyder 6.1.3
-    spyder-kernels from lab314
-```
+Then target only `spyder-kernels` and required dependencies in lab314. Scientific
+libraries remain independently updatable; their current versions are not frozen.
+See [the implemented workflows](lab314-maintenance.md#spyder-ide-and-kernel-maintenance).
 
 ---
 
@@ -141,7 +145,7 @@ Expected on Raspberry Pi:
 
 ```text
 /opt/lab314/bin/python
-3.0.5
+<kernel version compatible with the selected IDE>
 ```
 
 If another interpreter appears, Spyder is not using `lab314`.

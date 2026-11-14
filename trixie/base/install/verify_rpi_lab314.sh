@@ -2,8 +2,15 @@
 set -euo pipefail
 here=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 prefix=/opt/lab314
-if [[ ${1:-} == --prefix && $# == 2 ]]; then prefix=$2; elif (($#)); then echo "Usage: $0 [--prefix PREFIX]" >&2; exit 2; fi
-"$prefix/bin/python" -IB "$here/check_lab314.py" --prefix "$prefix" --contract "$here/../config/lab314/packages.json" --functional
+flags=()
+while (($#)); do
+    case "$1" in
+        --prefix) prefix=$2; shift 2 ;;
+        --snapshot) flags+=(--snapshot); shift ;;
+        *) echo "Usage: $0 [--prefix PREFIX] [--snapshot]" >&2; exit 2 ;;
+    esac
+done
+"$prefix/bin/python" -IB "$here/check_lab314.py" --prefix "$prefix" --functional "${flags[@]}"
 if [[ -x /opt/rpi/bin/python3 ]]; then
     /opt/rpi/bin/python3 -B -c 'import sys,cv2,picamera2,libcamera; print("rpi preserved",sys.executable,cv2.__version__)'
 fi

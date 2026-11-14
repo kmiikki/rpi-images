@@ -29,21 +29,23 @@ class Lab314Tests(unittest.TestCase):
         self.assertEqual(marker.read_text(),'evidence')
         self.assertEqual(list(prefix.iterdir()),[marker])
 
-    def test_existing_verified_prefix_not_recreated(self):
+    def test_existing_prefix_updated_not_recreated(self):
         prefix=self.root/'ok';(prefix/'bin').mkdir(parents=True)
         py=prefix/'bin/python';py.write_text('#!/bin/sh\nexit 0\n');py.chmod(0o755)
+        (prefix/'conda-meta').mkdir()
         before=py.stat().st_ctime_ns
         result=self.run_installer(prefix)
         self.assertEqual(result.returncode,0,result.stderr)
-        self.assertIn('KEEP',result.stdout)
+        self.assertIn('Update completed',result.stdout)
         self.assertEqual(py.stat().st_ctime_ns,before)
 
     def test_wrong_version_prefix_preserved(self):
         prefix=self.root/'old';(prefix/'bin').mkdir(parents=True)
         (prefix/'bin/python').symlink_to('/usr/bin/python3')
+        (prefix/'conda-meta').mkdir()
         result=self.run_installer(prefix)
         self.assertNotEqual(result.returncode,0)
-        self.assertIn('Existing prefix differs',result.stderr)
+        self.assertIn('Run with the selected lab314 Python',result.stderr)
         self.assertTrue((prefix/'bin/python').is_symlink())
 
     def test_invalid_prefix(self):

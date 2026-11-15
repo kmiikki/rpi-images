@@ -1,0 +1,121 @@
+{
+  "version": 2,
+  "defaults": {
+    "gateway": "staff-gw",
+    "share": "measurements",
+    "group": "staff",
+    "additional_groups": [
+      "research-a"
+    ]
+  },
+  "groups": {
+    "research-a": {
+      "description": "Example research group"
+    },
+    "project-x": {
+      "description": "Example project"
+    }
+  },
+  "gateways": {
+    "staff-gw": {
+      "host": "staff-gateway.example.invalid",
+      "description": "Example staff gateway; server decides login access",
+      "allowed_groups": [
+        "staff"
+      ],
+      "default_user": "research-user"
+    },
+    "student-gw": {
+      "host": "student-gateway.example.invalid",
+      "description": "Example staff and student gateway",
+      "allowed_groups": [
+        "staff",
+        "students"
+      ]
+    }
+  },
+  "nodes": {
+    "research": {
+      "name": "Research directory guide",
+      "groups": [
+        "all"
+      ]
+    },
+    "project": {
+      "parent": "research",
+      "name": "Project X",
+      "groups": [
+        "staff",
+        "research-a",
+        "project-x"
+      ]
+    }
+  },
+  "shares": {
+    "measurements": {
+      "parent": "project",
+      "name": "Measurements — µm",
+      "description": "Example deep destination, not a real inventory",
+      "groups": [
+        "staff",
+        "students",
+        "research-a"
+      ],
+      "allowed_groups": [
+        "remote project members"
+      ],
+      "mount_type": "sshfs",
+      "paths": {
+        "staff-gw": "/srv/example/research/Project X/Measurements",
+        "student-gw": "/srv/student/example/Project X/Measurements"
+      }
+    },
+    "smb-measurements": {
+      "parent": "project",
+      "name": "SMB measurements",
+      "groups": [
+        "staff",
+        "project-x"
+      ],
+      "allowed_groups": [
+        "remote project members"
+      ],
+      "mount_type": "cifs",
+      "remote_path": "/Research/Project X/Measurements",
+      "cifs_options": "iocharset=utf8,vers=3.0,noserverino",
+      "explicit_only": false
+    },
+    "browse": {
+      "parent": "research",
+      "name": "Storage browser",
+      "groups": [
+        "all"
+      ],
+      "allowed_groups": [
+        "all"
+      ],
+      "mount_type": "browse",
+      "browse_url": "smb://storage.example.invalid/Research/"
+    },
+    "maintenance": {
+      "parent": "research",
+      "name": "Explicit maintenance destination",
+      "groups": [
+        "staff"
+      ],
+      "allowed_groups": [
+        "remote administrators"
+      ],
+      "mount_type": "sshfs",
+      "remote_path": "/srv/example/maintenance",
+      "explicit_only": true
+    }
+  },
+  "site_notes": {
+    "description": "Generic public example only; visibility never grants access",
+    "optional_empty": "",
+    "nullable": null,
+    "revision": 1,
+    "enabled": true
+  }
+}

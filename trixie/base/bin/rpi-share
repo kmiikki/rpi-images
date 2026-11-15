@@ -21,6 +21,10 @@ LIST_ALL=0
 DEBUG=0
 ADMIN_MODE=0
 ADMIN_ACCOUNT_CONFIRMED=0
+TREE_ONLY=0
+TREE_FULL=0
+NAV_GROUPS=()
+CATALOG_TOOL="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/rpi_share_catalog.py"
 
 TARGET_MP=""
 MOUNTED_BY_THIS_SCRIPT=0
@@ -58,13 +62,18 @@ Options:
   --status               Show active known mounts
   --check                Check dependencies
   --open                 Open file manager after successful mount/browse
+  --tree                 Show the offline hierarchy, filtered by navigation groups
+  --tree-all             Show the complete offline hierarchy, including explicit-only entries
+  --group NAME           Navigation group, repeat for additional groups (not authorization)
   --config FILE          Use explicit config file
   -h, --help             Show this help
 
 Config resolution:
-  1. ./rpi-share.json
-  2. ~/.config/rpi-share.json
-  3. script_dir/rpi-share.json
+  1. --config FILE (explicit)
+  2. ./rpi-share.json
+  3. ~/.config/rpi-share.json
+  4. /etc/rpi-share/rpi-share.json
+  5. script_dir/rpi-share.json
 EOF
 }
 
@@ -85,6 +94,7 @@ resolve_config() {
     local candidates=(
         "$PWD/$CONFIG_NAME"
         "$HOME/.config/$CONFIG_NAME"
+        "/etc/rpi-share/$CONFIG_NAME"
         "$script_dir/$CONFIG_NAME"
     )
 
@@ -108,7 +118,7 @@ json_exists() {
 }
 
 groups_text() {
-    jq -r "$1 | join(\", \")" "$CONFIG_FILE"
+    jq -r "($1 // []) | join(\", \")" "$CONFIG_FILE"
 }
 
 mountpoint_for() {
@@ -146,7 +156,7 @@ remote_display_for() {
             echo "$host:$remote_path"
             ;;
         cifs)
-            echo "//$host$remote_path"
+            mapping_json "$gw" "$sh" | jq -r '.remote'
             ;;
         browse)
             browse_url="$(json_get ".shares[\"$sh\"].browse_url // \"\"")"
@@ -182,11 +192,11 @@ print_mapping() {
     echo "  Gateway        : $gw"
     echo "  Gateway host   : $host"
     [[ -n "$gw_desc" && "$gw_desc" != "null" ]] && echo "  Gateway note   : $gw_desc"
-    echo "  Gateway access : $gw_groups"
+    echo "  Gateway audience: $gw_groups"
     echo
     echo "  Share          : $sh"
     [[ -n "$sh_desc" && "$sh_desc" != "null" ]] && echo "  Share note     : $sh_desc"
-    echo "  Share access   : $sh_groups"
+    echo "  Share audience : $sh_groups"
     echo
     echo "  Mount type     : $mount_type"
     echo "  Remote path    : $remote"
@@ -195,6 +205,7 @@ print_mapping() {
         echo "  Local mount    : $mp"
     fi
 
+    echo "Catalog visibility grants no access. The gateway authorizes login; remote ACLs authorize files."
     echo
 }
 
@@ -238,20 +249,62 @@ check_dependencies() {
     [[ "$fatal" -eq 0 ]] || die "missing required base dependencies"
 }
 
+catalog() {
+    /usr/bin/python3 -B "$CATALOG_TOOL" "$@" --config "$CONFIG_FILE"
+}
+
 validate_config() {
-    json_exists '.version' || die "config missing: version"
-    json_exists '.defaults.gateway' || die "config missing: defaults.gateway"
-    json_exists '.defaults.share' || die "config missing: defaults.share"
-    json_exists '.gateways' || die "config missing: gateways"
-    json_exists '.shares' || die "config missing: shares"
+    catalog validate || die "invalid local configuration; no connection attempted"
+}
+
+mapping_json() {
+    catalog mapping --gateway "$1" --share "$2"
+}
+
+navigation_args() {
+    local group
+    for group in "${NAV_GROUPS[@]}"; do printf '%s\0%s\0' --group "$group"; done
+}
+
+interactive_catalog() {
+    local default_gw default_sh answer group args=() gateways=() shares=() labels=()
+    echo "Navigation groups filter the catalog only. Gateway login and remote ACLs authorize access."
+    if ((${#NAV_GROUPS[@]} == 0)); then
+        group=$(json_get '([.defaults.group // "all"] + (.defaults.additional_groups // [])) | join(" ")')
+        read -rp "Navigation groups (space separated) [$group]: " answer
+        read -ra NAV_GROUPS <<< "${answer:-$group}"
+    fi
+    mapfile -d '' -t args < <(navigation_args)
+    [[ $ADMIN_MODE != 1 ]] || args+=(--admin)
+    catalog tree "${args[@]}"
+    echo "Use --tree-all to inspect the complete configured tree without a connection."
+    mapfile -t gateways < <(jq -r '.gateways | keys[]' "$CONFIG_FILE")
+    default_gw=$(json_get '.defaults.gateway')
+    local index=1 i
+    for i in "${!gateways[@]}"; do
+        echo "  $((i+1))) ${gateways[$i]}"
+        [[ ${gateways[$i]} != "$default_gw" ]] || index=$((i+1))
+    done
+    GATEWAY=$(choose_from_numbered_menu "Gateway" "$index" "${gateways[@]}")
+    while IFS=$'\t' read -r sh label; do shares+=("$sh"); labels+=("$label"); done < <(catalog menu --gateway "$GATEWAY" "${args[@]}")
+    ((${#shares[@]})) || die "no selectable destinations; choose another group or use --group all"
+    default_sh=$(json_get '.defaults.share');index=1
+    for i in "${!shares[@]}"; do
+        echo "  $((i+1))) ${shares[$i]} — ${labels[$i]}"
+        [[ ${shares[$i]} != "$default_sh" ]] || index=$((i+1))
+    done
+    SHARE=$(choose_from_numbered_menu "Destination" "$index" "${shares[@]}")
 }
 
 validate_selection() {
     local gw="$1"
     local sh="$2"
+    [[ $gw =~ ^[A-Za-z0-9][A-Za-z0-9_.-]*$ && $sh =~ ^[A-Za-z0-9][A-Za-z0-9_.-]*$ ]] || die "invalid gateway/share identifier"
 
     json_exists ".gateways[\"$gw\"]" || die "unknown gateway: $gw"
     json_exists ".shares[\"$sh\"]" || die "unknown share: $sh"
+
+    mapping_json "$gw" "$sh" >/dev/null || die "destination is not configured for this gateway"
 
     local mount_type
     mount_type="$(mount_type_for "$sh")"
@@ -271,15 +324,15 @@ list_config() {
 
     echo "Gateways:"
     jq -r '.gateways | to_entries[] |
-        "  \(.key)\n    Host   : \(.value.host)\n    Access : \(.value.allowed_groups | join(", "))\n"' "$CONFIG_FILE"
+        "  \(.key)\n    Host   : \(.value.host)\n    Access : \((.value.allowed_groups // []) | join(", "))\n"' "$CONFIG_FILE"
 
     echo "Shares:"
     if [[ "$LIST_ALL" -eq 1 || "$ADMIN_MODE" -eq 1 ]]; then
         jq -r '.shares | to_entries[] |
-            "  \(.key)\n    Type          : \(.value.mount_type)\n    Remote path   : \(.value.remote_path // (if .value.paths then (.value.paths | to_entries | map(.key + ":" + .value) | join(", ")) else "-" end))\n    Access        : \(.value.allowed_groups | join(", "))\n    Explicit only : \(.value.explicit_only // false)\n"' "$CONFIG_FILE"
+            "  \(.key)\n    Type          : \(.value.mount_type)\n    Remote path   : \(.value.remote_path // (if .value.paths then (.value.paths | to_entries | map(.key + ":" + .value) | join(", ")) else "-" end))\n    Access        : \((.value.allowed_groups // []) | join(", "))\n    Explicit only : \(.value.explicit_only // false)\n"' "$CONFIG_FILE"
     else
         jq -r '.shares | to_entries[] | select((.value.explicit_only // false) == false) |
-            "  \(.key)\n    Type          : \(.value.mount_type)\n    Remote path   : \(.value.remote_path // (if .value.paths then (.value.paths | to_entries | map(.key + ":" + .value) | join(", ")) else "-" end))\n    Access        : \(.value.allowed_groups | join(", "))\n    Explicit only : \(.value.explicit_only // false)\n"' "$CONFIG_FILE"
+            "  \(.key)\n    Type          : \(.value.mount_type)\n    Remote path   : \(.value.remote_path // (if .value.paths then (.value.paths | to_entries | map(.key + ":" + .value) | join(", ")) else "-" end))\n    Access        : \((.value.allowed_groups // []) | join(", "))\n    Explicit only : \(.value.explicit_only // false)\n"' "$CONFIG_FILE"
     fi
 }
 
@@ -650,6 +703,10 @@ guided_select_aalto() {
 }
 
 interactive_select() {
+    if [[ $(json_get '.version | tostring') == 2* ]]; then
+        interactive_catalog
+        return
+    fi
     if is_aalto_config; then
         guided_select_aalto
         return
@@ -682,7 +739,7 @@ interactive_select() {
     echo
     echo "Available gateways:"
     jq -r '.gateways | to_entries[] |
-        "  \(.key)\n    Host   : \(.value.host)\n    Access : \(.value.allowed_groups | join(", "))\n"' "$CONFIG_FILE"
+        "  \(.key)\n    Host   : \(.value.host)\n    Access : \((.value.allowed_groups // []) | join(", "))\n"' "$CONFIG_FILE"
 
     read -rp "Gateway: " GATEWAY
     [[ -n "$GATEWAY" ]] || die "gateway cannot be empty"
@@ -691,10 +748,10 @@ interactive_select() {
     echo "Available shares:"
     if [[ "$ADMIN_MODE" -eq 1 ]]; then
         jq -r '.shares | to_entries[] |
-            "  \(.key)\n    Type        : \(.value.mount_type)\n    Remote path : \(.value.remote_path // (if .value.paths then (.value.paths | to_entries | map(.key + ":" + .value) | join(", ")) else "-" end))\n    Access      : \(.value.allowed_groups | join(", "))\n    Explicit    : \(.value.explicit_only // false)\n"' "$CONFIG_FILE"
+            "  \(.key)\n    Type        : \(.value.mount_type)\n    Remote path : \(.value.remote_path // (if .value.paths then (.value.paths | to_entries | map(.key + ":" + .value) | join(", ")) else "-" end))\n    Access      : \((.value.allowed_groups // []) | join(", "))\n    Explicit    : \(.value.explicit_only // false)\n"' "$CONFIG_FILE"
     else
         jq -r '.shares | to_entries[] | select((.value.explicit_only // false) == false) |
-            "  \(.key)\n    Type        : \(.value.mount_type)\n    Remote path : \(.value.remote_path // (if .value.paths then (.value.paths | to_entries | map(.key + ":" + .value) | join(", ")) else "-" end))\n    Access      : \(.value.allowed_groups | join(", "))\n"' "$CONFIG_FILE"
+            "  \(.key)\n    Type        : \(.value.mount_type)\n    Remote path : \(.value.remote_path // (if .value.paths then (.value.paths | to_entries | map(.key + ":" + .value) | join(", ")) else "-" end))\n    Access      : \((.value.allowed_groups // []) | join(", "))\n"' "$CONFIG_FILE"
     fi
 
     read -rp "Share: " SHARE
@@ -741,13 +798,7 @@ mount_browse() {
     local sh="$2"
 
     local url
-    url="$(json_get ".shares[\"$sh\"].browse_url // \"\"")"
-
-    if [[ -z "$url" || "$url" == "null" ]]; then
-        local host
-        host="$(json_get ".gateways[\"$gw\"].host")"
-        url="smb://$host/"
-    fi
+    url="$(mapping_json "$gw" "$sh" | jq -r '.remote')"
 
     echo
     echo "Opening browse view:"
@@ -768,6 +819,7 @@ mount_sshfs() {
     remote_path="$(remote_path_for "$gw" "$sh")"
 
     prompt_remote_user_if_needed
+    [[ $REMOTE_USER != -* && $REMOTE_USER != *$'\n'* && $REMOTE_USER != *$'\r'* ]] || die "invalid remote username"
 
     remote="${REMOTE_USER}@${host}:${remote_path}"
 
@@ -818,13 +870,17 @@ mount_cifs() {
     command -v mount.cifs >/dev/null 2>&1 || die "mount.cifs not installed; install cifs-utils"
 
     local host remote_path remote options password uid gid
+    [[ $- != *x* ]] || die "disable shell tracing before entering credentials"
     host="$(json_get ".gateways[\"$gw\"].host")"
-    remote_path="$(remote_path_for "$gw" "$sh")"
-    remote="//$host$remote_path"
-    options="$(json_get ".shares[\"$sh\"].cifs_options // \"iocharset=utf8,vers=3.0,noserverino\"")"
+    local mapped
+    mapped="$(mapping_json "$gw" "$sh")"
+    remote="$(jq -r '.remote' <<< "$mapped")"
+    options="$(jq -r '.options' <<< "$mapped")"
 
     prompt_remote_user_if_needed
+    [[ $REMOTE_USER != -* && $REMOTE_USER != *$'\n'* && $REMOTE_USER != *$'\r'* ]] || die "invalid remote username"
 
+    [[ -t 0 ]] || die "CIFS authentication requires interactive input"
     read -rsp "Password: " password
     echo
     [[ -n "$password" ]] || die "password cannot be empty"
@@ -853,6 +909,9 @@ EOF
     sudo mount -t cifs "$remote" "$TARGET_MP" \
         -o "credentials=$CRED_FILE,uid=$uid,gid=$gid,file_mode=0600,dir_mode=0700,$options"
 
+    unset password
+    shred -u "$CRED_FILE" 2>/dev/null || rm -f "$CRED_FILE"
+    CRED_FILE=""
     MOUNTED_BY_THIS_SCRIPT=1
 }
 
@@ -953,6 +1012,13 @@ parse_args() {
                 REMOVE_DIRS=1
                 shift
                 ;;
+            --tree)
+                TREE_ONLY=1; shift ;;
+            --tree-all)
+                TREE_ONLY=1; TREE_FULL=1; shift ;;
+            --group)
+                [[ $# -ge 2 ]] || die "$1 requires a value"
+                NAV_GROUPS+=("$2"); shift 2 ;;
             --list)
                 LIST_ONLY=1
                 shift
@@ -986,11 +1052,6 @@ parse_args() {
                 CONFIG_FILE="$2"
                 shift 2
                 ;;
-            --config)
-                [[ $# -ge 2 ]] || die "$1 requires a value"
-                CONFIG_FILE="$2"
-                shift 2
-                ;;
             -h|--help)
                 usage
                 exit 0
@@ -1009,10 +1070,7 @@ main() {
     fi
 
     need_cmd jq
-    need_cmd mountpoint
-    need_cmd mount
-    need_cmd umount
-    need_cmd sudo
+    need_cmd python3
 
     if [[ "$CHECK_ONLY" -eq 1 ]]; then
         check_dependencies
@@ -1022,10 +1080,24 @@ main() {
     CONFIG_FILE="$(resolve_config)"
     validate_config
 
+    if [[ "$TREE_ONLY" -eq 1 ]]; then
+        local args=()
+        mapfile -d '' -t args < <(navigation_args)
+        [[ $TREE_FULL != 1 ]] || args+=(--full)
+        [[ $ADMIN_MODE != 1 ]] || args+=(--admin)
+        catalog tree "${args[@]}"
+        exit 0
+    fi
+
     if [[ "$LIST_ONLY" -eq 1 ]]; then
         list_config
         exit 0
     fi
+
+    need_cmd mountpoint
+    need_cmd mount
+    need_cmd umount
+    need_cmd sudo
 
     if [[ "$STATUS_ONLY" -eq 1 ]]; then
         status_known_mounts
@@ -1050,4 +1122,4 @@ main() {
     mount_mapping "$GATEWAY" "$SHARE"
 }
 
-main "$@"
+if [[ ${BASH_SOURCE[0]} == "$0" ]]; then main "$@"; fi

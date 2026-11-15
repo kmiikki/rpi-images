@@ -1,4 +1,4 @@
-"""Camera-free Bash step and release contract tests on Niobium."""
+"""Camera-free Bash step and release contract tests."""
 import hashlib
 import json
 import os

@@ -47,11 +47,31 @@ rpi-images/
         └── README.md
 ```
 
-Start with:
+Start with the [hands-on installation guide](QUICKSTART.md). For reusable local
+preferences, see the [profile builder](trixie/base/docs/profile-builder.md).
 
-```text id="rk6m4o"
-trixie/base/README.md
+## Installation profiles
+
+The unified installer is the recommended initial installation method for all users:
+
+```bash
+cd rpi-images/trixie/base/install
+sudo bash setup-rpi.sh
 ```
 
-for installation instructions.
+The installer interactively offers three independent, fully supported profiles:
 
+| Profile | Purpose |
+|---|---|
+| GENERAL | Generic Raspberry Pi installation without HOME- or AALTO-specific configuration |
+| HOME | Home environment with its predefined settings |
+| AALTO | Aalto University CHEM environment with its predefined settings |
+
+These commands work from a cloned repository or an extracted ZIP package.
+Run them from the parent of the repository directory; if the extracted folder
+has a different name, substitute that name in the `cd` command. Keep the full
+directory tree together; Git metadata is not required.
+
+See the [base installation guide](trixie/base/README.md#installation-profiles)
+and [unified setup guide](trixie/base/docs/unified-setup.md) for prerequisites,
+optional components and maintenance.

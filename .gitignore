@@ -1,0 +1,24 @@
+__pycache__/
+*.py[cod]
+
+# Optional administrator-maintained inventories belong outside the public tree.
+/trixie/base/config/local/
+
+# Private laboratory instructions are maintained outside this repository.
+/trixie/base/docs/rpi-share-quick.md
+
+# Reviewed internal reports and inventories; private copies are maintained outside Git.
+/trixie/base/docs/lab314-rolling-update-report.md
+/trixie/base/docs/lab314/README.md
+/trixie/base/docs/lab314/arm-native.txt
+/trixie/base/docs/lab314/bash-activation.md
+/trixie/base/docs/lab314/final-production-result-20261114.md
+/trixie/base/docs/lab314/package-comparison.csv
+/trixie/base/docs/lab314/production-20261114.md
+/trixie/base/docs/lab314/production-final-result-20261114.md
+/trixie/base/docs/lab314/production-result-20261114.md
+/trixie/base/docs/lab314/science-conda.csv
+/trixie/base/docs/lab314/science-native.txt
+/trixie/base/docs/lab314/science-python-distributions.csv
+/trixie/base/docs/lab314/spyder-variable-explorer-20261114.md
+/trixie/base/docs/lab314/trixie-model-finalization-20261114.md

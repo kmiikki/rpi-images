@@ -35,9 +35,11 @@ A JSON config file is required.
 Search order:
 
 ```text
-1. ./rpi-share.json
-2. ~/.config/rpi-share.json
-3. <script_dir>/rpi-share.json
+1. Explicit --config FILE, if selected
+2. ./rpi-share.json
+3. ~/.config/rpi-share.json
+4. /etc/rpi-share/rpi-share.json
+5. <script_dir>/rpi-share.json
 ```
 
 Override:
@@ -67,8 +69,8 @@ Top-level:
 
 ```json
 "defaults": {
-  "gateway": "viila",
-  "share": "teamwork-chem"
+  "gateway": "example-gateway",
+  "share": "example-share"
 }
 ```
 
@@ -79,17 +81,17 @@ Used in guided mode.
 ## Gateways
 
 ```json
-"viila": {
-  "host": "viila.org.aalto.fi",
-  "description": "Aalto staff gateway",
+"example-gateway": {
+  "host": "gateway.example.invalid",
+  "description": "Example staff gateway",
   "allowed_groups": ["staff"]
 }
 ```
 
 ```json
-"kosh": {
-  "host": "kosh.org.aalto.fi",
-  "description": "Aalto student and staff gateway",
+"alternate-gateway": {
+  "host": "alternate.example.invalid",
+  "description": "Example student and staff gateway",
   "allowed_groups": ["students", "staff"]
 }
 ```
@@ -120,10 +122,10 @@ Fields:
 ### SSHFS (single path)
 
 ```json
-"work-t100": {
-  "description": "Work CHEM",
+"example-share": {
+  "description": "Shared data",
   "mount_type": "sshfs",
-  "remote_path": "/m/work/t100"
+  "remote_path": "/srv/example/data"
 }
 ```
 
@@ -132,12 +134,12 @@ Fields:
 ### SSHFS (gateway-specific paths)
 
 ```json
-"teamwork-chem": {
-  "description": "Teamwork CHEM",
+"example-share": {
+  "description": "Shared data",
   "mount_type": "sshfs",
   "paths": {
-    "viila": "/m/teamwork/t1/T100",
-    "kosh": "/m/teamwork/T100"
+    "example-gateway": "/srv/example/data",
+    "alternate-gateway": "/exports/example/data"
   }
 }
 ```
@@ -147,9 +149,9 @@ Fields:
 ### CIFS share (home NAS)
 
 ```json
-"code": {
+"files": {
   "mount_type": "cifs",
-  "remote_path": "/Code",
+  "remote_path": "/Files",
   "cifs_options": "iocharset=utf8,vers=3.0,noserverino"
 }
 ```
@@ -161,11 +163,14 @@ Fields:
 ```json
 "root": {
   "mount_type": "browse",
-  "browse_url": "smb://nasse/"
+  "browse_url": "smb://storage.example.invalid/"
 }
 ```
 
 ---
+
+All server names and paths above are placeholders. The `remote_path`/`paths`
+values are server paths; they are distinct from the local mountpoints below.
 
 ## Path resolution
 
@@ -183,11 +188,11 @@ else:
 Example:
 
 ```json
-"teamwork-chem-scratch": {
+"maintenance-share": {
   "mount_type": "sshfs",
   "explicit_only": true,
   "paths": {
-    "viila": "/m/teamwork/chem_scratch"
+    "example-gateway": "/srv/example/maintenance"
   }
 }
 ```
@@ -231,15 +236,14 @@ Share list is built AFTER gateway selection
 Priority:
 
 ```text
-1. CLI (-u)
-2. interactive input
-3. $USER
+1. Explicit CLI (-u)
+2. Interactive input, with gateway default_user as an optional prompt default
 ```
 
 Example:
 
 ```bash
-rpi-share -g viila -s work-t100 -u username
+rpi-share -g example-gateway -s example-share -u username
 ```
 
 ---
@@ -317,7 +321,7 @@ Shows raw sshfs/cifs errors.
 - no credentials stored
 - no privilege escalation
 - relies on SSH / AD
-- avoids exposing restricted paths
+- navigation visibility is not an access control mechanism
 ```
 
 ---
@@ -333,8 +337,8 @@ Home setups may use:
 Example:
 
 ```json
-"nasse": {
-  "host": "nasse",
+"example-storage": {
+  "host": "storage.example.invalid",
   "default_user": "username"
 }
 ```
@@ -359,3 +363,16 @@ Example:
 - no hidden behavior
 - transparency over automation
 ```
+
+
+## Offline catalogs, hierarchy and CSV editing
+
+The existing version-1 configurations and commands above remain supported.
+For version-2 hierarchical destinations, navigation groups, offline tree views,
+configuration precedence and lossless JSON ↔ CSV editing in LibreOffice Calc,
+see the [catalog specification and commands](rpi-share-catalog.md).
+Software installation and per-user configuration are integrated into the
+[unified setup workflow](unified-setup.md). Selecting a navigation group grants
+no remote rights: the gateway authorizes login and remote filesystem ACLs
+authorize directory access. `--tree-all` displays the entire configured guide
+without contacting a server.

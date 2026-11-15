@@ -1,0 +1,68 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "rpi-share local catalog",
+  "description": "Version 1/2 shape. Runtime validation also checks references, cycles, credentials and backend paths. Unknown optional fields are retained.",
+  "type": "object",
+  "required": ["version", "defaults", "gateways", "shares"],
+  "properties": {
+    "version": {"enum": [1, 2, "1", "1.0", "2", "2.0"]},
+    "defaults": {
+      "type": "object",
+      "required": ["gateway", "share"],
+      "properties": {
+        "gateway": {"type": "string"},
+        "share": {"type": "string"},
+        "group": {"type": ["string", "null"]},
+        "additional_groups": {"$ref": "#/$defs/groups"}
+      },
+      "additionalProperties": true
+    },
+    "gateways": {
+      "type": "object", "minProperties": 1,
+      "additionalProperties": {
+        "type": "object", "required": ["host"],
+        "properties": {
+          "host": {"type": "string"},
+          "description": {"type": ["string", "null"]},
+          "allowed_groups": {"$ref": "#/$defs/groups"},
+          "default_user": {"type": ["string", "null"]},
+          "domain": {"type": ["string", "null"]}
+        },
+        "additionalProperties": true
+      }
+    },
+    "shares": {"type": "object", "minProperties": 1, "additionalProperties": {"$ref": "#/$defs/destination"}},
+    "nodes": {"type": "object", "additionalProperties": {"$ref": "#/$defs/node"}},
+    "groups": {"type": "object"}
+  },
+  "additionalProperties": true,
+  "$defs": {
+    "groups": {"type": ["array", "null"], "items": {"type": "string", "minLength": 1}, "uniqueItems": true},
+    "node": {
+      "type": "object",
+      "properties": {
+        "name": {"type": ["string", "null"]},
+        "description": {"type": ["string", "null"]},
+        "parent": {"type": ["string", "null"]},
+        "groups": {"$ref": "#/$defs/groups"}
+      },
+      "additionalProperties": true
+    },
+    "destination": {
+      "allOf": [{"$ref": "#/$defs/node"}],
+      "required": ["mount_type"],
+      "properties": {
+        "mount_type": {"enum": ["sshfs", "cifs", "browse"]},
+        "allowed_groups": {"$ref": "#/$defs/groups"},
+        "explicit_only": {"type": ["boolean", "null"]},
+        "remote_path": {"type": ["string", "null"]},
+        "paths": {"type": ["object", "null"], "additionalProperties": {"type": "string"}},
+        "browse_url": {"type": ["string", "null"]},
+        "cifs_options": {"type": ["string", "null"]},
+        "share_root": {"type": ["string", "null"]},
+        "subdir": {"type": ["string", "null"]}
+      },
+      "additionalProperties": true
+    }
+  }
+}

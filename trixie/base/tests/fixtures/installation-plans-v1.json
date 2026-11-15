@@ -1,0 +1,884 @@
+{
+  "AALTO|alice|CHEM|False": {
+    "argv": [
+      "--profile",
+      "AALTO",
+      "--plan",
+      "--school",
+      "CHEM"
+    ],
+    "existing": false,
+    "invoker": "alice",
+    "plan": {
+      "additional": [
+        "chem-it"
+      ],
+      "components": {
+        "conda": true,
+        "hardware": false,
+        "imaging": false,
+        "lab314": true,
+        "share": true,
+        "spyder": true,
+        "system": true,
+        "wolfram": true
+      },
+      "config": null,
+      "config_source": "DEFERRED: configure later",
+      "existing_conda": false,
+      "existing_ide": false,
+      "existing_lab": false,
+      "existing_rpi": false,
+      "existing_wolfram": false,
+      "hostname": "rpi-test",
+      "ntp": "ntp.aalto.fi",
+      "owners": [
+        "chem"
+      ],
+      "primary": "chem",
+      "profile": "AALTO",
+      "school": "CHEM",
+      "share_prefix": "/usr/local",
+      "ssh": "keep"
+    },
+    "runtime": {
+      "apt_upgrade": false,
+      "ide_prefix": null,
+      "imaging_app": [],
+      "imaging_approved": false,
+      "imaging_source": null,
+      "lab_prefix": "/opt/lab314",
+      "recovery": null,
+      "replace_share_config": false,
+      "update_existing": false,
+      "yes": false
+    },
+    "stages": [
+      [
+        "accounts",
+        "KEEP existing passwords; create only missing approved accounts"
+      ],
+      [
+        "profile",
+        "NTP ntp.aalto.fi; SSH keep"
+      ],
+      [
+        "system",
+        "ENSURE existing APT dependency lists; full upgrade False"
+      ],
+      [
+        "conda",
+        "INSTALL Miniforge through existing script"
+      ],
+      [
+        "lab314",
+        "INSTALL/ROLLING UPDATE Python 3.14.x"
+      ],
+      [
+        "shell",
+        "REUSE existing lab314 shell activation and envrun"
+      ],
+      [
+        "wolfram",
+        "CHECK APT availability, then existing optional installer"
+      ],
+      [
+        "share",
+        "INSTALL /usr/local/bin/rpi-share; DEFERRED: configure later"
+      ],
+      [
+        "verification",
+        "VERIFY selected components and report deferred GUI/hardware/network acceptance"
+      ]
+    ]
+  },
+  "AALTO|alice|CHEM|True": {
+    "argv": [
+      "--profile",
+      "AALTO",
+      "--plan",
+      "--school",
+      "CHEM"
+    ],
+    "existing": true,
+    "invoker": "alice",
+    "plan": {
+      "additional": [
+        "chem-it"
+      ],
+      "components": {
+        "conda": true,
+        "hardware": false,
+        "imaging": false,
+        "lab314": true,
+        "share": true,
+        "spyder": true,
+        "system": true,
+        "wolfram": true
+      },
+      "config": null,
+      "config_source": "DEFERRED: configure later",
+      "existing_conda": true,
+      "existing_ide": false,
+      "existing_lab": true,
+      "existing_rpi": true,
+      "existing_wolfram": false,
+      "hostname": "rpi-test",
+      "ntp": "ntp.aalto.fi",
+      "owners": [
+        "chem"
+      ],
+      "primary": "chem",
+      "profile": "AALTO",
+      "school": "CHEM",
+      "share_prefix": "/opt/lab",
+      "ssh": "keep"
+    },
+    "runtime": {
+      "apt_upgrade": false,
+      "ide_prefix": null,
+      "imaging_app": [],
+      "imaging_approved": false,
+      "imaging_source": null,
+      "lab_prefix": "/opt/lab314",
+      "recovery": null,
+      "replace_share_config": false,
+      "update_existing": false,
+      "yes": false
+    },
+    "stages": [
+      [
+        "accounts",
+        "KEEP existing passwords; create only missing approved accounts"
+      ],
+      [
+        "profile",
+        "NTP ntp.aalto.fi; SSH keep"
+      ],
+      [
+        "system",
+        "ENSURE existing APT dependency lists; full upgrade False"
+      ],
+      [
+        "conda",
+        "KEEP"
+      ],
+      [
+        "lab314",
+        "KEEP"
+      ],
+      [
+        "shell",
+        "REUSE existing lab314 shell activation and envrun"
+      ],
+      [
+        "wolfram",
+        "CHECK APT availability, then existing optional installer"
+      ],
+      [
+        "share",
+        "INSTALL /opt/lab/bin/rpi-share; DEFERRED: configure later"
+      ],
+      [
+        "verification",
+        "VERIFY selected components and report deferred GUI/hardware/network acceptance"
+      ]
+    ]
+  },
+  "AALTO|alice|auto|False": {
+    "argv": [
+      "--profile",
+      "AALTO",
+      "--plan"
+    ],
+    "existing": false,
+    "invoker": "alice",
+    "plan": {
+      "additional": [
+        "chem-it"
+      ],
+      "components": {
+        "conda": true,
+        "hardware": false,
+        "imaging": false,
+        "lab314": true,
+        "share": true,
+        "spyder": true,
+        "system": true,
+        "wolfram": true
+      },
+      "config": null,
+      "config_source": "DEFERRED: configure later",
+      "existing_conda": false,
+      "existing_ide": false,
+      "existing_lab": false,
+      "existing_rpi": false,
+      "existing_wolfram": false,
+      "hostname": "rpi-test",
+      "ntp": "ntp.aalto.fi",
+      "owners": [
+        "chem"
+      ],
+      "primary": "chem",
+      "profile": "AALTO",
+      "school": "CHEM",
+      "share_prefix": "/usr/local",
+      "ssh": "keep"
+    },
+    "runtime": {
+      "apt_upgrade": false,
+      "ide_prefix": null,
+      "imaging_app": [],
+      "imaging_approved": false,
+      "imaging_source": null,
+      "lab_prefix": "/opt/lab314",
+      "recovery": null,
+      "replace_share_config": false,
+      "update_existing": false,
+      "yes": false
+    },
+    "stages": [
+      [
+        "accounts",
+        "KEEP existing passwords; create only missing approved accounts"
+      ],
+      [
+        "profile",
+        "NTP ntp.aalto.fi; SSH keep"
+      ],
+      [
+        "system",
+        "ENSURE existing APT dependency lists; full upgrade False"
+      ],
+      [
+        "conda",
+        "INSTALL Miniforge through existing script"
+      ],
+      [
+        "lab314",
+        "INSTALL/ROLLING UPDATE Python 3.14.x"
+      ],
+      [
+        "shell",
+        "REUSE existing lab314 shell activation and envrun"
+      ],
+      [
+        "wolfram",
+        "CHECK APT availability, then existing optional installer"
+      ],
+      [
+        "share",
+        "INSTALL /usr/local/bin/rpi-share; DEFERRED: configure later"
+      ],
+      [
+        "verification",
+        "VERIFY selected components and report deferred GUI/hardware/network acceptance"
+      ]
+    ]
+  },
+  "AALTO|alice|auto|True": {
+    "argv": [
+      "--profile",
+      "AALTO",
+      "--plan"
+    ],
+    "existing": true,
+    "invoker": "alice",
+    "plan": {
+      "additional": [
+        "chem-it"
+      ],
+      "components": {
+        "conda": true,
+        "hardware": false,
+        "imaging": false,
+        "lab314": true,
+        "share": true,
+        "spyder": true,
+        "system": true,
+        "wolfram": true
+      },
+      "config": null,
+      "config_source": "DEFERRED: configure later",
+      "existing_conda": true,
+      "existing_ide": false,
+      "existing_lab": true,
+      "existing_rpi": true,
+      "existing_wolfram": false,
+      "hostname": "rpi-test",
+      "ntp": "ntp.aalto.fi",
+      "owners": [
+        "chem"
+      ],
+      "primary": "chem",
+      "profile": "AALTO",
+      "school": "CHEM",
+      "share_prefix": "/opt/lab",
+      "ssh": "keep"
+    },
+    "runtime": {
+      "apt_upgrade": false,
+      "ide_prefix": null,
+      "imaging_app": [],
+      "imaging_approved": false,
+      "imaging_source": null,
+      "lab_prefix": "/opt/lab314",
+      "recovery": null,
+      "replace_share_config": false,
+      "update_existing": false,
+      "yes": false
+    },
+    "stages": [
+      [
+        "accounts",
+        "KEEP existing passwords; create only missing approved accounts"
+      ],
+      [
+        "profile",
+        "NTP ntp.aalto.fi; SSH keep"
+      ],
+      [
+        "system",
+        "ENSURE existing APT dependency lists; full upgrade False"
+      ],
+      [
+        "conda",
+        "KEEP"
+      ],
+      [
+        "lab314",
+        "KEEP"
+      ],
+      [
+        "shell",
+        "REUSE existing lab314 shell activation and envrun"
+      ],
+      [
+        "wolfram",
+        "CHECK APT availability, then existing optional installer"
+      ],
+      [
+        "share",
+        "INSTALL /opt/lab/bin/rpi-share; DEFERRED: configure later"
+      ],
+      [
+        "verification",
+        "VERIFY selected components and report deferred GUI/hardware/network acceptance"
+      ]
+    ]
+  },
+  "AALTO|chem|auto|False": {
+    "argv": [
+      "--profile",
+      "AALTO",
+      "--plan"
+    ],
+    "existing": false,
+    "invoker": "chem",
+    "plan": {
+      "additional": [
+        "chem-it"
+      ],
+      "components": {
+        "conda": true,
+        "hardware": false,
+        "imaging": false,
+        "lab314": true,
+        "share": true,
+        "spyder": true,
+        "system": true,
+        "wolfram": true
+      },
+      "config": null,
+      "config_source": "DEFERRED: configure later",
+      "existing_conda": false,
+      "existing_ide": false,
+      "existing_lab": false,
+      "existing_rpi": false,
+      "existing_wolfram": false,
+      "hostname": "rpi-test",
+      "ntp": "ntp.aalto.fi",
+      "owners": [
+        "chem"
+      ],
+      "primary": "chem",
+      "profile": "AALTO",
+      "school": "CHEM",
+      "share_prefix": "/usr/local",
+      "ssh": "keep"
+    },
+    "runtime": {
+      "apt_upgrade": false,
+      "ide_prefix": null,
+      "imaging_app": [],
+      "imaging_approved": false,
+      "imaging_source": null,
+      "lab_prefix": "/opt/lab314",
+      "recovery": null,
+      "replace_share_config": false,
+      "update_existing": false,
+      "yes": false
+    },
+    "stages": [
+      [
+        "accounts",
+        "KEEP existing passwords; create only missing approved accounts"
+      ],
+      [
+        "profile",
+        "NTP ntp.aalto.fi; SSH keep"
+      ],
+      [
+        "system",
+        "ENSURE existing APT dependency lists; full upgrade False"
+      ],
+      [
+        "conda",
+        "INSTALL Miniforge through existing script"
+      ],
+      [
+        "lab314",
+        "INSTALL/ROLLING UPDATE Python 3.14.x"
+      ],
+      [
+        "shell",
+        "REUSE existing lab314 shell activation and envrun"
+      ],
+      [
+        "wolfram",
+        "CHECK APT availability, then existing optional installer"
+      ],
+      [
+        "share",
+        "INSTALL /usr/local/bin/rpi-share; DEFERRED: configure later"
+      ],
+      [
+        "verification",
+        "VERIFY selected components and report deferred GUI/hardware/network acceptance"
+      ]
+    ]
+  },
+  "AALTO|chem|auto|True": {
+    "argv": [
+      "--profile",
+      "AALTO",
+      "--plan"
+    ],
+    "existing": true,
+    "invoker": "chem",
+    "plan": {
+      "additional": [
+        "chem-it"
+      ],
+      "components": {
+        "conda": true,
+        "hardware": false,
+        "imaging": false,
+        "lab314": true,
+        "share": true,
+        "spyder": true,
+        "system": true,
+        "wolfram": true
+      },
+      "config": null,
+      "config_source": "DEFERRED: configure later",
+      "existing_conda": true,
+      "existing_ide": false,
+      "existing_lab": true,
+      "existing_rpi": true,
+      "existing_wolfram": false,
+      "hostname": "rpi-test",
+      "ntp": "ntp.aalto.fi",
+      "owners": [
+        "chem"
+      ],
+      "primary": "chem",
+      "profile": "AALTO",
+      "school": "CHEM",
+      "share_prefix": "/opt/lab",
+      "ssh": "keep"
+    },
+    "runtime": {
+      "apt_upgrade": false,
+      "ide_prefix": null,
+      "imaging_app": [],
+      "imaging_approved": false,
+      "imaging_source": null,
+      "lab_prefix": "/opt/lab314",
+      "recovery": null,
+      "replace_share_config": false,
+      "update_existing": false,
+      "yes": false
+    },
+    "stages": [
+      [
+        "accounts",
+        "KEEP existing passwords; create only missing approved accounts"
+      ],
+      [
+        "profile",
+        "NTP ntp.aalto.fi; SSH keep"
+      ],
+      [
+        "system",
+        "ENSURE existing APT dependency lists; full upgrade False"
+      ],
+      [
+        "conda",
+        "KEEP"
+      ],
+      [
+        "lab314",
+        "KEEP"
+      ],
+      [
+        "shell",
+        "REUSE existing lab314 shell activation and envrun"
+      ],
+      [
+        "wolfram",
+        "CHECK APT availability, then existing optional installer"
+      ],
+      [
+        "share",
+        "INSTALL /opt/lab/bin/rpi-share; DEFERRED: configure later"
+      ],
+      [
+        "verification",
+        "VERIFY selected components and report deferred GUI/hardware/network acceptance"
+      ]
+    ]
+  },
+  "GENERAL|alice|auto|False": {
+    "argv": [
+      "--profile",
+      "GENERAL",
+      "--plan"
+    ],
+    "existing": false,
+    "invoker": "alice",
+    "plan": {
+      "additional": [],
+      "components": {
+        "conda": true,
+        "hardware": false,
+        "imaging": false,
+        "lab314": true,
+        "share": false,
+        "spyder": true,
+        "system": true,
+        "wolfram": false
+      },
+      "config": null,
+      "config_source": "DEFERRED: configure later",
+      "existing_conda": false,
+      "existing_ide": false,
+      "existing_lab": false,
+      "existing_rpi": false,
+      "existing_wolfram": false,
+      "hostname": "rpi-test",
+      "ntp": "pool.ntp.org time.cloudflare.com",
+      "owners": [
+        "alice"
+      ],
+      "primary": "alice",
+      "profile": "GENERAL",
+      "school": "custom",
+      "share_prefix": "/usr/local",
+      "ssh": "keep"
+    },
+    "runtime": {
+      "apt_upgrade": false,
+      "ide_prefix": null,
+      "imaging_app": [],
+      "imaging_approved": false,
+      "imaging_source": null,
+      "lab_prefix": "/opt/lab314",
+      "recovery": null,
+      "replace_share_config": false,
+      "update_existing": false,
+      "yes": false
+    },
+    "stages": [
+      [
+        "accounts",
+        "KEEP existing passwords; create only missing approved accounts"
+      ],
+      [
+        "profile",
+        "NTP pool.ntp.org time.cloudflare.com; SSH keep"
+      ],
+      [
+        "system",
+        "ENSURE existing APT dependency lists; full upgrade False"
+      ],
+      [
+        "conda",
+        "INSTALL Miniforge through existing script"
+      ],
+      [
+        "lab314",
+        "INSTALL/ROLLING UPDATE Python 3.14.x"
+      ],
+      [
+        "shell",
+        "REUSE existing lab314 shell activation and envrun"
+      ],
+      [
+        "verification",
+        "VERIFY selected components and report deferred GUI/hardware/network acceptance"
+      ]
+    ]
+  },
+  "GENERAL|alice|auto|True": {
+    "argv": [
+      "--profile",
+      "GENERAL",
+      "--plan"
+    ],
+    "existing": true,
+    "invoker": "alice",
+    "plan": {
+      "additional": [],
+      "components": {
+        "conda": true,
+        "hardware": false,
+        "imaging": false,
+        "lab314": true,
+        "share": false,
+        "spyder": true,
+        "system": true,
+        "wolfram": false
+      },
+      "config": null,
+      "config_source": "DEFERRED: configure later",
+      "existing_conda": true,
+      "existing_ide": false,
+      "existing_lab": true,
+      "existing_rpi": true,
+      "existing_wolfram": false,
+      "hostname": "rpi-test",
+      "ntp": "pool.ntp.org time.cloudflare.com",
+      "owners": [
+        "alice"
+      ],
+      "primary": "alice",
+      "profile": "GENERAL",
+      "school": "custom",
+      "share_prefix": "/opt/lab",
+      "ssh": "keep"
+    },
+    "runtime": {
+      "apt_upgrade": false,
+      "ide_prefix": null,
+      "imaging_app": [],
+      "imaging_approved": false,
+      "imaging_source": null,
+      "lab_prefix": "/opt/lab314",
+      "recovery": null,
+      "replace_share_config": false,
+      "update_existing": false,
+      "yes": false
+    },
+    "stages": [
+      [
+        "accounts",
+        "KEEP existing passwords; create only missing approved accounts"
+      ],
+      [
+        "profile",
+        "NTP pool.ntp.org time.cloudflare.com; SSH keep"
+      ],
+      [
+        "system",
+        "ENSURE existing APT dependency lists; full upgrade False"
+      ],
+      [
+        "conda",
+        "KEEP"
+      ],
+      [
+        "lab314",
+        "KEEP"
+      ],
+      [
+        "shell",
+        "REUSE existing lab314 shell activation and envrun"
+      ],
+      [
+        "verification",
+        "VERIFY selected components and report deferred GUI/hardware/network acceptance"
+      ]
+    ]
+  },
+  "HOME|alice|auto|False": {
+    "argv": [
+      "--profile",
+      "HOME",
+      "--plan"
+    ],
+    "existing": false,
+    "invoker": "alice",
+    "plan": {
+      "additional": [],
+      "components": {
+        "conda": true,
+        "hardware": false,
+        "imaging": false,
+        "lab314": true,
+        "share": true,
+        "spyder": true,
+        "system": true,
+        "wolfram": false
+      },
+      "config": null,
+      "config_source": "DEFERRED: configure later",
+      "existing_conda": false,
+      "existing_ide": false,
+      "existing_lab": false,
+      "existing_rpi": false,
+      "existing_wolfram": false,
+      "hostname": "rpi-test",
+      "ntp": "time.mikes.fi",
+      "owners": [
+        "alice"
+      ],
+      "primary": "alice",
+      "profile": "HOME",
+      "school": "custom",
+      "share_prefix": "/usr/local",
+      "ssh": "enable"
+    },
+    "runtime": {
+      "apt_upgrade": false,
+      "ide_prefix": null,
+      "imaging_app": [],
+      "imaging_approved": false,
+      "imaging_source": null,
+      "lab_prefix": "/opt/lab314",
+      "recovery": null,
+      "replace_share_config": false,
+      "update_existing": false,
+      "yes": false
+    },
+    "stages": [
+      [
+        "accounts",
+        "KEEP existing passwords; create only missing approved accounts"
+      ],
+      [
+        "profile",
+        "NTP time.mikes.fi; SSH enable"
+      ],
+      [
+        "system",
+        "ENSURE existing APT dependency lists; full upgrade False"
+      ],
+      [
+        "conda",
+        "INSTALL Miniforge through existing script"
+      ],
+      [
+        "lab314",
+        "INSTALL/ROLLING UPDATE Python 3.14.x"
+      ],
+      [
+        "shell",
+        "REUSE existing lab314 shell activation and envrun"
+      ],
+      [
+        "share",
+        "INSTALL /usr/local/bin/rpi-share; DEFERRED: configure later"
+      ],
+      [
+        "verification",
+        "VERIFY selected components and report deferred GUI/hardware/network acceptance"
+      ]
+    ]
+  },
+  "HOME|alice|auto|True": {
+    "argv": [
+      "--profile",
+      "HOME",
+      "--plan"
+    ],
+    "existing": true,
+    "invoker": "alice",
+    "plan": {
+      "additional": [],
+      "components": {
+        "conda": true,
+        "hardware": false,
+        "imaging": false,
+        "lab314": true,
+        "share": true,
+        "spyder": true,
+        "system": true,
+        "wolfram": false
+      },
+      "config": null,
+      "config_source": "DEFERRED: configure later",
+      "existing_conda": true,
+      "existing_ide": false,
+      "existing_lab": true,
+      "existing_rpi": true,
+      "existing_wolfram": false,
+      "hostname": "rpi-test",
+      "ntp": "time.mikes.fi",
+      "owners": [
+        "alice"
+      ],
+      "primary": "alice",
+      "profile": "HOME",
+      "school": "custom",
+      "share_prefix": "/opt/lab",
+      "ssh": "enable"
+    },
+    "runtime": {
+      "apt_upgrade": false,
+      "ide_prefix": null,
+      "imaging_app": [],
+      "imaging_approved": false,
+      "imaging_source": null,
+      "lab_prefix": "/opt/lab314",
+      "recovery": null,
+      "replace_share_config": false,
+      "update_existing": false,
+      "yes": false
+    },
+    "stages": [
+      [
+        "accounts",
+        "KEEP existing passwords; create only missing approved accounts"
+      ],
+      [
+        "profile",
+        "NTP time.mikes.fi; SSH enable"
+      ],
+      [
+        "system",
+        "ENSURE existing APT dependency lists; full upgrade False"
+      ],
+      [
+        "conda",
+        "KEEP"
+      ],
+      [
+        "lab314",
+        "KEEP"
+      ],
+      [
+        "shell",
+        "REUSE existing lab314 shell activation and envrun"
+      ],
+      [
+        "share",
+        "INSTALL /opt/lab/bin/rpi-share; DEFERRED: configure later"
+      ],
+      [
+        "verification",
+        "VERIFY selected components and report deferred GUI/hardware/network acceptance"
+      ]
+    ]
+  }
+}

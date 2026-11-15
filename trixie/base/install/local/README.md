@@ -1,30 +1,41 @@
-# Local configuration files
+# Installation customization
 
-This directory is optional.
+Use the unified installer's profile builder to customize installation preferences.
+The installers do not load override scripts from this directory.
+Keep site-specific profiles outside the repository and store no credentials in them.
 
-You may create local override files here if you want to customize usernames for your own machine.
-
-## Example: `pre_home.local.sh`
-
-```bash
-export PRIMARY_USER="myuser"
-```
-
-## Example: `pre_aalto.local.sh`
+From the repository root, open the builder's menu:
 
 ```bash
-export PRIMARY_USER="labadmin"
-export EXTRA_SUDO_USERS_STR="assistant1 assistant2"
+cd trixie/base/install
+python3 -B profile-builder.py
 ```
 
-## Default behavior if these files do not exist
+Create a profile from GENERAL, HOME or AALTO, edit its settings, preview the plan
+and save it outside Git. GENERAL is the independent base for custom installations;
+HOME and AALTO retain their predefined deployment policies.
 
-* `pre_home.sh` uses the current user who ran `sudo`
-* `pre_aalto.sh` uses the current user who ran `sudo`
-* no extra sudo users are created unless `EXTRA_SUDO_USERS_STR` is defined
+For a command-line alternative, choose a new output filename:
 
-## Important
+```bash
+python3 -B profile-builder.py --export GENERAL --output ~/workstation.json
+python3 -B profile-builder.py --validate ~/workstation.json
+bash setup-rpi.sh --profile-file ~/workstation.json --plan
+sudo bash setup-rpi.sh --profile-file ~/workstation.json
+```
 
-Do not upload your real `.local.sh` files to GitHub.
-They may contain usernames specific to your own environment.
+To edit a saved profile, reopen the menu and choose **Load JSON**, then **Edit
+setting**, validate and save. Existing output files are protected from accidental
+overwrite. Explicit installer CLI options override corresponding profile settings:
 
+```bash
+bash setup-rpi.sh --profile-file ~/workstation.json --hostname rpi-workstation --plan
+```
+
+Review the displayed accounts, privileges and components before applying changes.
+Profile files do not authorize account recovery, password setup or installation
+confirmation. Existing account and sudo policies remain in force.
+
+See the [profile builder guide](../../docs/profile-builder.md) for the format and
+supported settings, and the [unified setup reference](../../docs/unified-setup.md)
+for account recovery, safeguards and maintenance.

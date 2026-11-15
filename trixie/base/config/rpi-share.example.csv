@@ -1,0 +1,91 @@
+path,json_value
+,{}
+/defaults,{}
+/defaults/additional_groups,[]
+/defaults/additional_groups/0,"""research-a"""
+/defaults/gateway,"""staff-gw"""
+/defaults/group,"""staff"""
+/defaults/share,"""measurements"""
+/gateways,{}
+/gateways/staff-gw,{}
+/gateways/staff-gw/allowed_groups,[]
+/gateways/staff-gw/allowed_groups/0,"""staff"""
+/gateways/staff-gw/default_user,"""research-user"""
+/gateways/staff-gw/description,"""Example staff gateway; server decides login access"""
+/gateways/staff-gw/host,"""staff-gateway.example.invalid"""
+/gateways/student-gw,{}
+/gateways/student-gw/allowed_groups,[]
+/gateways/student-gw/allowed_groups/0,"""staff"""
+/gateways/student-gw/allowed_groups/1,"""students"""
+/gateways/student-gw/description,"""Example staff and student gateway"""
+/gateways/student-gw/host,"""student-gateway.example.invalid"""
+/groups,{}
+/groups/project-x,{}
+/groups/project-x/description,"""Example project"""
+/groups/research-a,{}
+/groups/research-a/description,"""Example research group"""
+/nodes,{}
+/nodes/project,{}
+/nodes/project/groups,[]
+/nodes/project/groups/0,"""staff"""
+/nodes/project/groups/1,"""research-a"""
+/nodes/project/groups/2,"""project-x"""
+/nodes/project/name,"""Project X"""
+/nodes/project/parent,"""research"""
+/nodes/research,{}
+/nodes/research/groups,[]
+/nodes/research/groups/0,"""all"""
+/nodes/research/name,"""Research directory guide"""
+/shares,{}
+/shares/browse,{}
+/shares/browse/allowed_groups,[]
+/shares/browse/allowed_groups/0,"""all"""
+/shares/browse/browse_url,"""smb://storage.example.invalid/Research/"""
+/shares/browse/groups,[]
+/shares/browse/groups/0,"""all"""
+/shares/browse/mount_type,"""browse"""
+/shares/browse/name,"""Storage browser"""
+/shares/browse/parent,"""research"""
+/shares/maintenance,{}
+/shares/maintenance/allowed_groups,[]
+/shares/maintenance/allowed_groups/0,"""remote administrators"""
+/shares/maintenance/explicit_only,true
+/shares/maintenance/groups,[]
+/shares/maintenance/groups/0,"""staff"""
+/shares/maintenance/mount_type,"""sshfs"""
+/shares/maintenance/name,"""Explicit maintenance destination"""
+/shares/maintenance/parent,"""research"""
+/shares/maintenance/remote_path,"""/srv/example/maintenance"""
+/shares/measurements,{}
+/shares/measurements/allowed_groups,[]
+/shares/measurements/allowed_groups/0,"""remote project members"""
+/shares/measurements/description,"""Example deep destination, not a real inventory"""
+/shares/measurements/groups,[]
+/shares/measurements/groups/0,"""staff"""
+/shares/measurements/groups/1,"""students"""
+/shares/measurements/groups/2,"""research-a"""
+/shares/measurements/mount_type,"""sshfs"""
+/shares/measurements/name,"""Measurements — µm"""
+/shares/measurements/parent,"""project"""
+/shares/measurements/paths,{}
+/shares/measurements/paths/staff-gw,"""/srv/example/research/Project X/Measurements"""
+/shares/measurements/paths/student-gw,"""/srv/student/example/Project X/Measurements"""
+/shares/smb-measurements,{}
+/shares/smb-measurements/allowed_groups,[]
+/shares/smb-measurements/allowed_groups/0,"""remote project members"""
+/shares/smb-measurements/cifs_options,"""iocharset=utf8,vers=3.0,noserverino"""
+/shares/smb-measurements/explicit_only,false
+/shares/smb-measurements/groups,[]
+/shares/smb-measurements/groups/0,"""staff"""
+/shares/smb-measurements/groups/1,"""project-x"""
+/shares/smb-measurements/mount_type,"""cifs"""
+/shares/smb-measurements/name,"""SMB measurements"""
+/shares/smb-measurements/parent,"""project"""
+/shares/smb-measurements/remote_path,"""/Research/Project X/Measurements"""
+/site_notes,{}
+/site_notes/description,"""Generic public example only; visibility never grants access"""
+/site_notes/enabled,true
+/site_notes/nullable,null
+/site_notes/optional_empty,""""""
+/site_notes/revision,1
+/version,2

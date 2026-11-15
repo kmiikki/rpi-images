@@ -1,72 +1,25 @@
 #!/usr/bin/env bash
+# Legacy AALTO entrypoint: validate the shared CHEM policy before any host changes.
 set -euo pipefail
-
-PRIMARY_USER="${PRIMARY_USER:-chem}"
-EXTRA_SUDO_USERS=("chem-it")
-NTP_PRIMARY="ntp.aalto.fi"
-NTP_SECONDARY="time.mikes.fi"
-NTP_FALLBACK="time.cloudflare.com pool.ntp.org"
-
-need_root() {
-    [[ "${EUID}" -eq 0 ]] || { echo "Run as root: sudo $0" >&2; exit 1; }
-}
-
-configure_timesyncd() {
-    cat >/etc/systemd/timesyncd.conf <<EOF
-[Time]
-NTP=${NTP_PRIMARY} ${NTP_SECONDARY}
-FallbackNTP=${NTP_FALLBACK}
-EOF
-    systemctl restart systemd-timesyncd || true
-    timedatectl set-ntp true || true
-}
-
-wait_for_time_sync() {
-    echo "==> Waiting for time sync (max 60s)"
-    for _ in $(seq 1 60); do
-        if timedatectl show -p NTPSynchronized --value 2>/dev/null | grep -qx "yes"; then
-            echo "Time synchronization: OK"
-            timedatectl | sed -n '1,8p'
-            return 0
-        fi
-        sleep 1
-    done
-    echo "WARNING: Time does not appear synchronized yet."
-    timedatectl || true
-    return 1
-}
-
-ensure_user_exists() {
-    local user="$1"
-    if id -u "$user" >/dev/null 2>&1; then
-        echo "User exists: $user"
-    else
-        adduser --gecos "" "$user"
-    fi
-}
-
-ensure_user_is_sudo() {
-    local user="$1"
-    if id -u "$user" >/dev/null 2>&1; then
-        usermod -aG sudo "$user"
-    else
-        echo "WARNING: user not found: $user"
-    fi
-}
-
-main() {
-    need_root
-    configure_timesyncd
-    wait_for_time_sync || true
-    ensure_user_exists "$PRIMARY_USER"
-    ensure_user_is_sudo "$PRIMARY_USER"
-    for u in "${EXTRA_SUDO_USERS[@]}"; do
-        ensure_user_exists "$u"
-        ensure_user_is_sudo "$u"
-    done
-    echo
-    echo "AALTO PRE complete."
-    echo "No SSH server was installed."
-}
-
-main "$@"
+(($# == 0)) || { echo 'Usage: pre_aalto.sh (account overrides use PRIMARY_USER and EXTRA_SUDO_USERS)' >&2; exit 2; }
+here=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+policy=$(/usr/bin/python3 -B - "$here" <<'PY_POLICY'
+import os
+import sys
+sys.path.insert(0,sys.argv[1])
+from rpi_accounts import aalto_account_plan
+try:
+    raw=os.environ.get('EXTRA_SUDO_USERS')
+    plan=aalto_account_plan(os.environ.get('PRIMARY_USER'),None if raw is None else raw.split())
+except ValueError as exc:
+    sys.exit('Error: '+str(exc))
+print(plan['primary'])
+print(' '.join(plan['additional']))
+PY_POLICY
+)
+mapfile -t policy_lines <<< "$policy"
+export PRIMARY_USER="${policy_lines[0]}"
+export EXTRA_SUDO_USERS="${policy_lines[1]}"
+export NTP_PRIMARY="${NTP_PRIMARY:-ntp.aalto.fi}"
+export SSH_POLICY="${SSH_POLICY:-keep}"
+exec bash "$here/pre_profile.sh" AALTO

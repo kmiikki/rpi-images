@@ -38,27 +38,30 @@ Follow the prompts:
 You can skip guided mode:
 
 ```bash
-rpi-share -g viila -s work-t100
+rpi-share -g example-gateway -s example-share
 ```
 
 With explicit username:
 
 ```bash
-rpi-share -g viila -s work-t100 -u username
+rpi-share -g example-gateway -s example-share -u username
 ```
 
 ---
 
 ## Installation
 
-Copy the script to a suitable location:
+From the repository root, install the client and its shared offline catalog module:
 
 ```bash
-sudo cp rpi-share /opt/lab/bin/rpi-share
-sudo chmod +x /opt/lab/bin/rpi-share
+sudo bash trixie/base/install/install_rpi_share.sh
+# To update an established /opt/lab/bin installation in place:
+sudo bash trixie/base/install/install_rpi_share.sh --prefix /opt/lab
 ```
 
-The script is fully portable and does not require installation.
+The source-tree client can also be run directly with Bash. When copying the
+client manually, keep `rpi_share_catalog.py` beside it; the builder entrypoint
+uses the same module. No lab314 environment is required.
 
 ---
 
@@ -69,9 +72,11 @@ The script is fully portable and does not require installation.
 Search order:
 
 ```text
-1. ./rpi-share.json
-2. ~/.config/rpi-share.json
-3. <script_dir>/rpi-share.json
+1. Explicit --config FILE, if selected
+2. ./rpi-share.json
+3. ~/.config/rpi-share.json
+4. /etc/rpi-share/rpi-share.json
+5. <script_dir>/rpi-share.json
 ```
 
 Override with:
@@ -102,10 +107,10 @@ Mounted shares appear under:
 /media/rpi-share/<gateway>/<share>
 ```
 
-Example:
+This is a local mount location, not a remote server path. For example:
 
 ```text
-/media/rpi-share/viila/work-t100
+/media/rpi-share/example-gateway/example-share
 ```
 
 ---
@@ -115,7 +120,7 @@ Example:
 * Close file manager windows before disconnecting
 * Do not use lazy or forced unmount
 * Access rights are controlled by the remote system (e.g. Aalto AD)
-* Some shares may not be visible if you do not have permission
+* Catalog navigation filters control visibility; remote permissions control access
 
 ---
 
@@ -123,7 +128,7 @@ Example:
 
 * `viila` → staff gateway (recommended for staff)
 * `kosh` → student + staff gateway
-* Teamwork and Work shares may differ between gateways
+* The same logical share may use different remote paths on different gateways
 * Use shared storage for research data (not personal home directories)
 
 ---
@@ -167,3 +172,16 @@ docs/rpi-share-advanced.md
 * Uses existing authentication
 * Safe and predictable behavior
 * Minimal user friction
+
+
+## Offline catalogs, hierarchy and CSV editing
+
+The existing version-1 configurations and commands above remain supported.
+For version-2 hierarchical destinations, navigation groups, offline tree views,
+configuration precedence and lossless JSON ↔ CSV editing in LibreOffice Calc,
+see the [catalog specification and commands](rpi-share-catalog.md).
+Software installation and per-user configuration are integrated into the
+[unified setup workflow](unified-setup.md). Selecting a navigation group grants
+no remote rights: the gateway authorizes login and remote filesystem ACLs
+authorize directory access. `--tree-all` displays the entire configured guide
+without contacting a server.

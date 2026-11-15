@@ -6,6 +6,17 @@ Trixie Full, 64-bit**: cameras, data loggers and other research instruments.
 
 ---
 
+## Unified initial installation
+
+The unified installer is the recommended initial installation method for the
+independent GENERAL, HOME and AALTO profiles after Raspberry Pi Imager and first
+boot. See [Installation profiles](#installation-profiles) below for the command
+and the [unified setup guide](docs/unified-setup.md) for previews and options.
+From `trixie/base`, preview with `bash install/setup-rpi.sh --profile GENERAL --primary-user YOUR_USER --plan`.
+Existing component installers remain independently usable. See the
+[architecture](docs/unified-architecture.md) and
+[offline, reversible rpi-share JSON/CSV catalogs](docs/rpi-share-catalog.md).
+
 ## Purpose
 
 Creates and manages:
@@ -206,7 +217,7 @@ base/
 │   ├── rpi-env.md
 │   ├── rpi-share.md
 │   ├── rpi-share-advanced.md
-│   ├── rpi-share-quick.md
+│   ├── rpi-share-catalog.md
 │   ├── rpi-vs-ubuntu.md
 │   ├── spyder-lab314.md
 │   └── wolfram.md
@@ -217,34 +228,34 @@ base/
 
 ---
 
-## Installation
+New users: follow the [hands-on installation guide](../../QUICKSTART.md).
 
-Download this repository with Git, or download and extract its GitHub ZIP.
-The scripts use their own directory to locate `config/`, `tools/` and other
-scripts; `.git`, Niobium files and T9 archives are not runtime requirements.
-Keep the whole directory tree together. Review the existing `pre_home.sh` /
-`pre_aalto.sh` account, NTP and SSH policy before provisioning. Their existing
-profile defaults are retained; `PRIMARY_USER` can be supplied explicitly.
-This step provisions the OS and accounts: do not rerun the full profile just
-to update an application. A full APT upgrade still requires the existing
-`DO_APT_UPGRADE=1` selection; it is not enabled by this documentation.
+## Installation profiles
 
-
-### Raspberry Pi (home)
+The unified installer is the recommended initial installation method for all users:
 
 ```bash
-cd install
-sudo bash run_rpi_home.sh
+cd rpi-images/trixie/base/install
+sudo bash setup-rpi.sh
 ```
 
-### Raspberry Pi (Aalto)
+The installer interactively offers three independent, fully supported profiles:
 
-```bash
-cd install
-sudo bash run_rpi_aalto.sh
-```
+| Profile | Purpose |
+|---|---|
+| GENERAL | Generic Raspberry Pi installation without HOME- or AALTO-specific configuration |
+| HOME | Home environment with its predefined settings |
+| AALTO | Aalto University CHEM environment with its predefined settings |
 
-Use only one Raspberry Pi profile.
+These commands work from a cloned repository or an extracted ZIP package.
+Run them from the parent of the repository directory; if the extracted folder
+has a different name, substitute that name in the `cd` command. Keep the full
+directory tree together; Git metadata is not required.
+
+The installation scripts locate their dependencies relative to their own directory. Git metadata is not required.
+Review the unified installer's account and component plan before confirming.
+Do not rerun full provisioning merely to update an application; use the
+[unified setup and maintenance guide](docs/unified-setup.md).
 
 The Raspberry Pi install path sets up:
 
@@ -257,14 +268,31 @@ envrun
 /opt/sci/bin and /opt/sci/bin-rpi PATH support
 ```
 
+### Legacy / profile-specific installation scripts
+
+The existing HOME/AALTO scripts remain available for compatibility and maintenance.
+From `rpi-images/trixie/base/install`, choose the appropriate script:
+
+```bash
+sudo bash run_rpi_home.sh
+sudo bash run_rpi_aalto.sh
+```
+
+Review the existing `pre_home.sh` / `pre_aalto.sh` account, NTP and SSH policy
+before provisioning with these scripts. Their profile defaults are retained;
+`PRIMARY_USER` can be supplied explicitly. A full APT upgrade through these
+scripts still requires the existing `DO_APT_UPGRADE=1` selection.
+
 By default the base profiles omit the hardware environment and applications. For a fresh installation, select cam-imgcheck before provisioning with `sudo bash run_rpi_home.sh --with-cam-imgcheck /path/to/scientific-imaging` (or the Aalto script). For an existing Pi, use the application-only step. [Application installation and rollback](docs/sci-apps.md)
 
 ---
 
 ### Camera-system hardware environment
 
-The default HOME/AALTO profile omits `/opt/rpi`. For a **new camera machine**,
-create it after the base profile and before Scientific Imaging camera apps:
+`/opt/rpi` is optional for GENERAL, HOME and AALTO. Select hardware support in
+the unified installer (or use `--hardware`). For a **new camera machine** where
+it was not selected, create it after base provisioning and before Scientific
+Imaging camera apps:
 
 ```bash
 # From trixie/base/install; only when /opt/rpi does not exist:
@@ -279,7 +307,7 @@ shebangs for installed camera applications. Preserve `envrun` for its existing
 workflows; no new application wrappers are created.
 
 The existing `--with-cam-imgcheck SCIENTIFIC_IMAGING` choice creates a missing
-`/opt/rpi` at its current point in the HOME/AALTO sequence and runs the pilot
+`/opt/rpi` at its current point in the legacy HOME/AALTO sequence and runs the pilot
 installer. If using that choice, do not separately recreate `/opt/rpi`.
 See [hardware environment details](docs/rpi-env.md).
 
@@ -403,15 +431,17 @@ rpi-share.json
 
 Resolution order:
 
-1. working directory
-2. `~/.config/rpi-share.json`
-3. script directory
+1. Explicit `--config FILE`
+2. Working directory
+3. `~/.config/rpi-share.json`
+4. `/etc/rpi-share/rpi-share.json`
+5. Script directory
 
 See:
 
 ```text
 docs/rpi-share.md
-docs/rpi-share-quick.md
+docs/rpi-share-catalog.md
 docs/rpi-share-advanced.md
 ```
 

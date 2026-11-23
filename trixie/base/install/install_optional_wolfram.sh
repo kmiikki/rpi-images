@@ -161,21 +161,19 @@ main() {
         log
     fi
 
-    if command -v wolframscript >/dev/null 2>&1; then
-        log "wolframscript is already available in PATH."
-        if ! confirm "Reinstall/upgrade via apt anyway? [y/N] "; then
+    if [[ ${RPI_WOLFRAM_APT_READY:-0} != 1 ]]; then
+        local prompt="Continue with Wolfram Engine installation? [y/N] "
+        if command -v wolframscript >/dev/null 2>&1; then
+            log "wolframscript is already available in PATH."
+            prompt="Reinstall/upgrade via apt anyway? [y/N] "
+        fi
+        if ! confirm "$prompt"; then
             log "Cancelled."
             exit 0
         fi
-    else
-        if ! confirm "Continue with Wolfram Engine installation? [y/N] "; then
-            log "Cancelled."
-            exit 0
-        fi
+        run_cmd sudo apt update
+        run_cmd sudo apt install -y wolfram-engine
     fi
-
-    run_cmd sudo apt update
-    run_cmd sudo apt install -y wolfram-engine
 
     log
     log "Verifying installation..."
@@ -192,7 +190,7 @@ main() {
         die "Installation finished, but 'wolframscript' was not found in PATH."
     fi
 
-    if wolframscript -code "2+2" >/dev/null 2>&1; then
+    if [[ $(timeout 60s wolframscript -code '2+2' </dev/null 2>/dev/null) == 4 ]]; then
         log "Success: wolframscript is working."
     else
         warn "wolframscript was found, but the test command did not complete cleanly."

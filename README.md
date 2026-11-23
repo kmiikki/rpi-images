@@ -52,14 +52,17 @@ preferences, see the [profile builder](trixie/base/docs/profile-builder.md).
 
 ## Installation profiles
 
-The unified installer is the recommended initial installation method for all users:
+`setup-rpi.sh` is the only supported entry point for new Raspberry Pi OS Trixie
+installations. Setup offers keyboard layout selection first. On Raspberry Pi 5
+Model B it also initializes the hardware interfaces. If setup pauses for a
+reboot, repeat the same command afterward, then choose a profile and approve the plan.
 
 ```bash
 cd rpi-images/trixie/base/install
 sudo bash setup-rpi.sh
 ```
 
-The installer interactively offers three independent, fully supported profiles:
+The unified installer supports three profiles.
 
 | Profile | Purpose |
 |---|---|
@@ -74,4 +77,4 @@ directory tree together; Git metadata is not required.
 
 See the [base installation guide](trixie/base/README.md#installation-profiles)
 and [unified setup guide](trixie/base/docs/unified-setup.md) for prerequisites,
-optional components and maintenance.
+optional components, maintenance and recovery.

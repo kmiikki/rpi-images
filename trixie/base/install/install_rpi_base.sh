@@ -20,6 +20,9 @@ check_rpi_os() {
 install_apt_list() {
     local listfile="$1"
     mapfile -t pkgs < <(grep -v '^[[:space:]]*#' "$listfile" | grep -v '^[[:space:]]*$')
+    if [[ ${INSTALL_APT_SPYDER:-1} == 0 ]]; then
+        mapfile -t pkgs < <(printf '%s\n' "${pkgs[@]}" | grep -vEx 'spyder|python3-spyder-kernels')
+    fi
     [[ ${#pkgs[@]} -gt 0 ]] && apt-get install -y "${pkgs[@]}"
 }
 

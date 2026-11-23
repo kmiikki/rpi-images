@@ -17,13 +17,7 @@ install -d -m 755 "$root/etc/profile.d"
 stage=$(mktemp -d)
 trap 'rm -rf -- "$stage"' EXIT
 sed '/# >>> LAB314 BEGIN >>>/,/# <<< LAB314 END <<</d' "$bashrc" > "$stage/bashrc"
-cat >> "$stage/bashrc" <<'EOF'
-# >>> LAB314 BEGIN >>>
-if [[ $- == *i* && -r /etc/profile.d/lab314-bash.sh ]]; then
-    . /etc/profile.d/lab314-bash.sh
-fi
-# <<< LAB314 END <<<
-EOF
+cat "$here/lab314-bashrc-block.sh" >> "$stage/bashrc"
 bash -n "$stage/bashrc"
 # Preserve an exact pre-change backup, including original owner and attributes.
 if ! cmp -s "$stage/bashrc" "$bashrc"; then

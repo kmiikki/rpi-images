@@ -15,7 +15,7 @@
       ],
       "components": {
         "conda": true,
-        "hardware": false,
+        "hardware": true,
         "imaging": false,
         "lab314": true,
         "share": true,
@@ -29,8 +29,10 @@
       "existing_ide": false,
       "existing_lab": false,
       "existing_rpi": false,
+      "existing_spyder": false,
       "existing_wolfram": false,
       "hostname": "rpi-test",
+      "native_lab": false,
       "ntp": "ntp.aalto.fi",
       "owners": [
         "chem"
@@ -64,7 +66,7 @@
       ],
       [
         "system",
-        "ENSURE existing APT dependency lists; full upgrade False"
+        "ENSURE existing APT dependency lists"
       ],
       [
         "conda",
@@ -72,11 +74,19 @@
       ],
       [
         "lab314",
-        "INSTALL/ROLLING UPDATE Python 3.14.x"
+        "INSTALL Python 3.14"
+      ],
+      [
+        "spyder-desktop",
+        "INSTALL in Scientific Python"
       ],
       [
         "shell",
         "REUSE existing lab314 shell activation and envrun"
+      ],
+      [
+        "hardware",
+        "INSTALL optional /opt/rpi through existing script"
       ],
       [
         "wolfram",
@@ -108,7 +118,7 @@
       ],
       "components": {
         "conda": true,
-        "hardware": false,
+        "hardware": true,
         "imaging": false,
         "lab314": true,
         "share": true,
@@ -122,8 +132,10 @@
       "existing_ide": false,
       "existing_lab": true,
       "existing_rpi": true,
+      "existing_spyder": false,
       "existing_wolfram": false,
       "hostname": "rpi-test",
+      "native_lab": false,
       "ntp": "ntp.aalto.fi",
       "owners": [
         "chem"
@@ -157,7 +169,7 @@
       ],
       [
         "system",
-        "ENSURE existing APT dependency lists; full upgrade False"
+        "ENSURE existing APT dependency lists"
       ],
       [
         "conda",
@@ -165,11 +177,19 @@
       ],
       [
         "lab314",
-        "KEEP"
+        "RECONCILE missing manifest defaults"
+      ],
+      [
+        "spyder-desktop",
+        "DEFERRED: existing Scientific Python environment has no Spyder; migration is separate"
       ],
       [
         "shell",
         "REUSE existing lab314 shell activation and envrun"
+      ],
+      [
+        "hardware",
+        "KEEP"
       ],
       [
         "wolfram",
@@ -199,7 +219,7 @@
       ],
       "components": {
         "conda": true,
-        "hardware": false,
+        "hardware": true,
         "imaging": false,
         "lab314": true,
         "share": true,
@@ -213,8 +233,10 @@
       "existing_ide": false,
       "existing_lab": false,
       "existing_rpi": false,
+      "existing_spyder": false,
       "existing_wolfram": false,
       "hostname": "rpi-test",
+      "native_lab": false,
       "ntp": "ntp.aalto.fi",
       "owners": [
         "chem"
@@ -248,7 +270,7 @@
       ],
       [
         "system",
-        "ENSURE existing APT dependency lists; full upgrade False"
+        "ENSURE existing APT dependency lists"
       ],
       [
         "conda",
@@ -256,11 +278,19 @@
       ],
       [
         "lab314",
-        "INSTALL/ROLLING UPDATE Python 3.14.x"
+        "INSTALL Python 3.14"
+      ],
+      [
+        "spyder-desktop",
+        "INSTALL in Scientific Python"
       ],
       [
         "shell",
         "REUSE existing lab314 shell activation and envrun"
+      ],
+      [
+        "hardware",
+        "INSTALL optional /opt/rpi through existing script"
       ],
       [
         "wolfram",
@@ -290,7 +320,7 @@
       ],
       "components": {
         "conda": true,
-        "hardware": false,
+        "hardware": true,
         "imaging": false,
         "lab314": true,
         "share": true,
@@ -304,8 +334,10 @@
       "existing_ide": false,
       "existing_lab": true,
       "existing_rpi": true,
+      "existing_spyder": false,
       "existing_wolfram": false,
       "hostname": "rpi-test",
+      "native_lab": false,
       "ntp": "ntp.aalto.fi",
       "owners": [
         "chem"
@@ -339,7 +371,7 @@
       ],
       [
         "system",
-        "ENSURE existing APT dependency lists; full upgrade False"
+        "ENSURE existing APT dependency lists"
       ],
       [
         "conda",
@@ -347,11 +379,19 @@
       ],
       [
         "lab314",
-        "KEEP"
+        "RECONCILE missing manifest defaults"
+      ],
+      [
+        "spyder-desktop",
+        "DEFERRED: existing Scientific Python environment has no Spyder; migration is separate"
       ],
       [
         "shell",
         "REUSE existing lab314 shell activation and envrun"
+      ],
+      [
+        "hardware",
+        "KEEP"
       ],
       [
         "wolfram",
@@ -381,7 +421,7 @@
       ],
       "components": {
         "conda": true,
-        "hardware": false,
+        "hardware": true,
         "imaging": false,
         "lab314": true,
         "share": true,
@@ -395,8 +435,10 @@
       "existing_ide": false,
       "existing_lab": false,
       "existing_rpi": false,
+      "existing_spyder": false,
       "existing_wolfram": false,
       "hostname": "rpi-test",
+      "native_lab": false,
       "ntp": "ntp.aalto.fi",
       "owners": [
         "chem"
@@ -430,7 +472,7 @@
       ],
       [
         "system",
-        "ENSURE existing APT dependency lists; full upgrade False"
+        "ENSURE existing APT dependency lists"
       ],
       [
         "conda",
@@ -438,11 +480,19 @@
       ],
       [
         "lab314",
-        "INSTALL/ROLLING UPDATE Python 3.14.x"
+        "INSTALL Python 3.14"
+      ],
+      [
+        "spyder-desktop",
+        "INSTALL in Scientific Python"
       ],
       [
         "shell",
         "REUSE existing lab314 shell activation and envrun"
+      ],
+      [
+        "hardware",
+        "INSTALL optional /opt/rpi through existing script"
       ],
       [
         "wolfram",
@@ -472,7 +522,7 @@
       ],
       "components": {
         "conda": true,
-        "hardware": false,
+        "hardware": true,
         "imaging": false,
         "lab314": true,
         "share": true,
@@ -486,8 +536,10 @@
       "existing_ide": false,
       "existing_lab": true,
       "existing_rpi": true,
+      "existing_spyder": false,
       "existing_wolfram": false,
       "hostname": "rpi-test",
+      "native_lab": false,
       "ntp": "ntp.aalto.fi",
       "owners": [
         "chem"
@@ -521,7 +573,7 @@
       ],
       [
         "system",
-        "ENSURE existing APT dependency lists; full upgrade False"
+        "ENSURE existing APT dependency lists"
       ],
       [
         "conda",
@@ -529,11 +581,19 @@
       ],
       [
         "lab314",
-        "KEEP"
+        "RECONCILE missing manifest defaults"
+      ],
+      [
+        "spyder-desktop",
+        "DEFERRED: existing Scientific Python environment has no Spyder; migration is separate"
       ],
       [
         "shell",
         "REUSE existing lab314 shell activation and envrun"
+      ],
+      [
+        "hardware",
+        "KEEP"
       ],
       [
         "wolfram",
@@ -561,7 +621,7 @@
       "additional": [],
       "components": {
         "conda": true,
-        "hardware": false,
+        "hardware": true,
         "imaging": false,
         "lab314": true,
         "share": false,
@@ -575,8 +635,10 @@
       "existing_ide": false,
       "existing_lab": false,
       "existing_rpi": false,
+      "existing_spyder": false,
       "existing_wolfram": false,
       "hostname": "rpi-test",
+      "native_lab": false,
       "ntp": "pool.ntp.org time.cloudflare.com",
       "owners": [
         "alice"
@@ -610,7 +672,7 @@
       ],
       [
         "system",
-        "ENSURE existing APT dependency lists; full upgrade False"
+        "ENSURE existing APT dependency lists"
       ],
       [
         "conda",
@@ -618,11 +680,19 @@
       ],
       [
         "lab314",
-        "INSTALL/ROLLING UPDATE Python 3.14.x"
+        "INSTALL Python 3.14"
+      ],
+      [
+        "spyder-desktop",
+        "INSTALL in Scientific Python"
       ],
       [
         "shell",
         "REUSE existing lab314 shell activation and envrun"
+      ],
+      [
+        "hardware",
+        "INSTALL optional /opt/rpi through existing script"
       ],
       [
         "verification",
@@ -642,7 +712,7 @@
       "additional": [],
       "components": {
         "conda": true,
-        "hardware": false,
+        "hardware": true,
         "imaging": false,
         "lab314": true,
         "share": false,
@@ -656,8 +726,10 @@
       "existing_ide": false,
       "existing_lab": true,
       "existing_rpi": true,
+      "existing_spyder": false,
       "existing_wolfram": false,
       "hostname": "rpi-test",
+      "native_lab": false,
       "ntp": "pool.ntp.org time.cloudflare.com",
       "owners": [
         "alice"
@@ -691,7 +763,7 @@
       ],
       [
         "system",
-        "ENSURE existing APT dependency lists; full upgrade False"
+        "ENSURE existing APT dependency lists"
       ],
       [
         "conda",
@@ -699,11 +771,19 @@
       ],
       [
         "lab314",
-        "KEEP"
+        "RECONCILE missing manifest defaults"
+      ],
+      [
+        "spyder-desktop",
+        "DEFERRED: existing Scientific Python environment has no Spyder; migration is separate"
       ],
       [
         "shell",
         "REUSE existing lab314 shell activation and envrun"
+      ],
+      [
+        "hardware",
+        "KEEP"
       ],
       [
         "verification",
@@ -723,7 +803,7 @@
       "additional": [],
       "components": {
         "conda": true,
-        "hardware": false,
+        "hardware": true,
         "imaging": false,
         "lab314": true,
         "share": true,
@@ -737,8 +817,10 @@
       "existing_ide": false,
       "existing_lab": false,
       "existing_rpi": false,
+      "existing_spyder": false,
       "existing_wolfram": false,
       "hostname": "rpi-test",
+      "native_lab": false,
       "ntp": "time.mikes.fi",
       "owners": [
         "alice"
@@ -772,7 +854,7 @@
       ],
       [
         "system",
-        "ENSURE existing APT dependency lists; full upgrade False"
+        "ENSURE existing APT dependency lists"
       ],
       [
         "conda",
@@ -780,11 +862,19 @@
       ],
       [
         "lab314",
-        "INSTALL/ROLLING UPDATE Python 3.14.x"
+        "INSTALL Python 3.14"
+      ],
+      [
+        "spyder-desktop",
+        "INSTALL in Scientific Python"
       ],
       [
         "shell",
         "REUSE existing lab314 shell activation and envrun"
+      ],
+      [
+        "hardware",
+        "INSTALL optional /opt/rpi through existing script"
       ],
       [
         "share",
@@ -808,7 +898,7 @@
       "additional": [],
       "components": {
         "conda": true,
-        "hardware": false,
+        "hardware": true,
         "imaging": false,
         "lab314": true,
         "share": true,
@@ -822,8 +912,10 @@
       "existing_ide": false,
       "existing_lab": true,
       "existing_rpi": true,
+      "existing_spyder": false,
       "existing_wolfram": false,
       "hostname": "rpi-test",
+      "native_lab": false,
       "ntp": "time.mikes.fi",
       "owners": [
         "alice"
@@ -857,7 +949,7 @@
       ],
       [
         "system",
-        "ENSURE existing APT dependency lists; full upgrade False"
+        "ENSURE existing APT dependency lists"
       ],
       [
         "conda",
@@ -865,11 +957,19 @@
       ],
       [
         "lab314",
-        "KEEP"
+        "RECONCILE missing manifest defaults"
+      ],
+      [
+        "spyder-desktop",
+        "DEFERRED: existing Scientific Python environment has no Spyder; migration is separate"
       ],
       [
         "shell",
         "REUSE existing lab314 shell activation and envrun"
+      ],
+      [
+        "hardware",
+        "KEEP"
       ],
       [
         "share",

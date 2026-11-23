@@ -6,8 +6,12 @@ Raspberry Pi Imager installs the OS and creates the first account, password,
 hostname and initial network settings. `install/setup-rpi.sh` starts after boot.
 It is a small Bash entrypoint for `setup_rpi.py`, a system-Python orchestrator.
 The orchestrator detects identity, resolves an explicit plan, obtains approval,
-calls existing component scripts and verifies/report results. Plan mode performs
-no provisioning or configuration writes. Apply requires a Raspberry Pi 4/5,
+calls existing component scripts and reports verification results. On Raspberry
+Pi 5 Model B, setup runs preboot before asking for the profile. A first-install
+APT upgrade can run before the same manual reboot. Setup verifies the hardware
+interfaces on the next invocation and reuses a completed upgrade.
+The keyboard menu uses the same installed XKB registry as `rpi-keyboard`.
+Plan mode previews both stages without writes. Apply requires Raspberry Pi 4/5,
 Trixie and ARM64.
 
 GENERAL, HOME and AALTO share this one implementation. AALTO retains the existing
@@ -32,15 +36,18 @@ preferences are separate from runtime rpi-share catalogs.
 
 | Responsibility | Existing/shared component |
 |---|---|
+| Pi 5 I²C, SPI, i2c-dev and initial keyboard setup | `preboot.py`, `rpi-keyboard` |
 | Account creation/recovery and guarded separate removal | `rpi_accounts.py`, `rpi-accounts.py` |
 | Approved primary/invoking NOPASSWD policy | `account-policy.sh`, reused by `install_rpi_base.sh` |
 | Installation preference export/edit/validation | `profile-builder.py`, `installation_profiles.py` |
 | Profile NTP/SSH configuration | `pre_profile.sh`; standalone `pre_home.sh`/`pre_aalto.sh` |
-| OS dependencies and explicit upgrade policy | `install_rpi_base.sh`, existing APT package lists |
+| First-install OS upgrade and later reviewed updates | `os_upgrade.py`, existing Trixie APT repositories |
+| Scientific OS dependencies | `install_rpi_base.sh`, existing APT package lists |
 | Conda bootstrap | `install_conda_base.sh` |
 | Python 3.14.x scientific installation/maintenance | `create_lab314_env.sh`, existing policy/updater/checker |
-| Separate external Spyder IDE and kernel matching | existing `update_lab314.py --ide-prefix`, actual IDE metadata |
-| Optional system-compatible hardware bridge | `create_rpi_env.sh`, `verify_rpi_env.sh` |
+| Integrated Spyder and kernel matching | Conda-forge lab314 solve and installed IDE metadata |
+| Explicit external IDE maintenance | `update_lab314.py --ide-prefix`, separate from the default |
+| System-compatible hardware bridge selected by default | `create_rpi_env.sh`, `verify_rpi_env.sh` |
 | Shell integration / explicit environment runner | `enable_lab314_autoactivate_rpi.sh`, `install_envrun.sh` |
 | Optional Wolfram | existing install/uninstall scripts; CLI and GUI status separated |
 | Share client/software-only installation | `rpi-share`, `install_rpi_share.sh` |
@@ -52,7 +59,10 @@ and `/opt/rpi` remain separate. IDE maintenance does not turn the scientific
 environment into an IDE environment. Existing standalone installers and update
 interfaces remain available. Existing valid environments are kept unless their
 established maintenance route is explicitly selected. Failed package operations
-are reported without a claim of transactional rollback.
+are reported without a claim of transactional rollback. The maintenance menu
+reuses these component scripts and reads the private installation journal for
+ownership, drift, diagnostic logs and interrupted stages. Reset reverses only
+changes whose originals and installed state the journal can establish.
 
 ## Identity and password lifecycle
 

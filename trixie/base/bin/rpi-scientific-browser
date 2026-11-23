@@ -1,0 +1,41 @@
+#!/usr/bin/env bash
+# Keep scientific web content separate from the user's regular browser data.
+set -euo pipefail
+
+if [[ $# != 1 ]]; then
+    echo 'Usage: rpi-scientific-browser URL' >&2
+    exit 2
+fi
+case $1 in
+    http://*|https://*|file://*) ;;
+    *) echo 'Expected an HTTP, HTTPS or file URL.' >&2; exit 2 ;;
+esac
+
+runtime=${XDG_RUNTIME_DIR:-/run/user/$UID}
+if [[ ! -d $runtime || ! -O $runtime || ! -w $runtime ]]; then
+    echo 'The scientific browser requires a writable desktop session runtime directory.' >&2
+    exit 1
+fi
+profile=$(mktemp -d "$runtime/rpi-scientific-firefox.XXXXXXXX")
+browser=
+trap 'rm -rf -- "$profile"' EXIT
+stop() {
+    if [[ -n $browser ]]; then
+        kill "$browser" 2>/dev/null || true
+        wait "$browser" 2>/dev/null || true
+    fi
+}
+trap 'stop; exit 143' TERM HUP
+trap 'stop; exit 130' INT
+cat > "$profile/user.js" <<'EOF'
+// Keep this temporary visualization profile separate from desktop credentials.
+user_pref("signon.rememberSignons", false);
+user_pref("browser.cache.disk.enable", false);
+user_pref("browser.shell.checkDefaultBrowser", false);
+user_pref("browser.aboutwelcome.enabled", false);
+user_pref("browser.startup.page", 0);
+EOF
+
+/usr/bin/firefox --no-remote --profile "$profile" --new-window "$1" &
+browser=$!
+wait "$browser"

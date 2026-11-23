@@ -4,28 +4,20 @@
 
 **Lab314 is a continuously maintainable, modern Scientific Python environment for research, not a permanently frozen software distribution.**
 
-Normal installation is **rolling by default**. The authoritative editable
-specification is `config/lab314/requirements.json`. It lists the intended
-scientific, imaging, measurement and development tools, not every transitive
-dependency from one installation. Requirements come from the existing product
-package list and the workloads in `check_lab314.py`. Ordinary dependencies are
-resolved by Conda and pip. No invented numerical minimums or permanent exact
-pins have been added for these libraries.
+New unified installations resolve Python 3.14, Scientific Python, Spyder and
+its kernel in a single Conda-forge environment. The direct package list and
+current OpenCV 5.1.0 Qt6, HDF5 1.14.6 and Spyder 6.1.8 targets are in
+`config/lab314/requirements.json`. Conda selects compatible ARM64 builds
+for `h5py`, `netCDF4` and their native libraries. Spyder declares the supported
+range for `spyder-kernels`, which constrains IPython and ipykernel.
 
-Python stays in the **3.14 series**; maintenance releases are allowed. A new
-minor series requires separate compatibility validation. Conda manages Python,
-pip, packaging and their native dependencies. Scientific distributions are
-installed as binary wheels using the existing `opencv-python` distribution
-and the PyPI/piwheels sources. Headless/contrib OpenCV replacements are rejected;
-normal verification checks a Linux GUI backend and retains the image/video tests.
-
-The separate Spyder IDE is not installed inside lab314. Its declared
-`spyder-kernels` requirement is read from the IDE's own interpreter metadata.
-The fallback APT IDE is read with `/usr/bin/python3`. An administrator-selected
-external IDE is read with its own Python; its extension modules
-are never loaded into lab314. Kernel dependencies, including compatible IPython
-and ipykernel ranges, are left to the kernel's own package metadata and pip check.
-No IDE version, kernel version or IPython version is permanently pinned here.
+Older lab314 environments retain their original ownership. They use Conda for
+Python and native dependencies and PyPI/piwheels for the scientific wheels.
+When maintained with their legacy IDE workflow, the kernel constraint comes
+from the external IDE. The unified installer keeps an existing valid prefix
+and reports a missing integrated IDE as deferred. To migrate, create and test a
+new integrated environment at a vacant prefix before replacing or retiring an
+old environment through an explicit backup and recovery decision.
 
 The November 2026 inputs (`conda-linux-aarch64.txt`, `wheels.txt`, `packages.json`,
 `SHA256SUMS`) are **historical snapshot inputs**, retained without modification.
@@ -45,9 +37,34 @@ sudo bash create_lab314_env.sh
 bash verify_rpi_lab314.sh
 ```
 
-The HOME/AALTO entry points use this default without changed ordering or flags.
-**Rerunning the same normal installation script updates an existing environment**
-to the latest compatible packages. A current environment completes without
+For ordinary installation, use the unified installer. It keeps valid existing
+prefixes unless you explicitly request an update.
+
+### Upgrade OpenCV 5.0.0 to 5.1.0
+
+From `trixie/base/install`, preview the transaction, then run the same command
+without `--plan` to review and approve it.
+
+```sh
+sudo bash setup-rpi.sh --manage --action update --component lab314 --package opencv --plan
+sudo bash setup-rpi.sh --manage --action update --component lab314 --package opencv
+```
+
+The plan lists every package to be replaced, including an HDF5 downgrade and any
+build changes for `h5py` and `netCDF4`. If the package plan changes after approval,
+the installer stops before applying it. Verification checks OpenCV 5.1.0 and
+Qt6, reads and writes HDF5 and NetCDF files, and checks the Spyder kernel.
+The lifecycle record keeps the resulting versions. The update is limited to
+`/opt/lab314`.
+
+Before updating an environment that has written files with HDF5 2.2's latest
+format, retain an external backup and check representative files read-only with
+HDF5 1.14.6. Some newer-format files may require the newer runtime for reading.
+
+### Other maintenance
+
+For direct component maintenance, rerunning `create_lab314_env.sh` updates an
+existing environment to the latest compatible packages. A current environment completes without
 reinstalling its packages. Neither case recreates the prefix or resets user
 configuration. No OS upgrade or unattended action is part of this command.
 An incomplete or incorrectly selected prefix is rejected without replacement.
@@ -83,10 +100,45 @@ A snapshot can contain historical vulnerable versions; select it deliberately
 for reproduction/recovery, not as the default response to a security advisory.
 
 Normal verification checks Python series, required distributions, dynamic
-Spyder compatibility, imports, isolation, GUI-capable OpenCV, fonts and `pip
-check`. The existing scientific/geometry/file/video functional checks remain.
+Spyder compatibility, imports, isolation, GUI-capable OpenCV and `pip check`.
+The native layout also checks an offscreen HighGUI window, Qt/PyQtWebEngine
+loading and an actual IPython kernel. The existing scientific/geometry/file/video
+functional checks remain. Legacy wheel builds retain their font checks.
 The new update command runs normal functional verification after applying an
 update. Display/Spyder GUI interaction still needs the existing manual acceptance.
+
+### 16 KiB kernel verification
+
+Raspberry Pi 5 uses 16 KiB pages with its default kernel. On a Debian ARM64
+16 KiB QEMU guest, the original detached Jupyter client reported the kernel had
+died while the process was still running. The updated check uses Jupyter's local
+kernel manager to check process liveness directly. It captures the kernel's
+stderr, stdout and return code or terminating signal on failure.
+
+The allocator warning was reproduced independently on the same guest by
+importing PyArrow with Conda-forge `libarrow` build `26.0.1-hb5aa228_8_cpu`.
+That library embeds a private jemalloc. PyArrow successfully allocated memory
+with its default mimalloc and with `ARROW_DEFAULT_MEMORY_POOL=system`.
+The private jemalloc message can still appear when the library loads. On large-page
+ARM64, verification uses the system pool if Arrow would otherwise use jemalloc.
+For scripts that explicitly select jemalloc, use the system pool instead.
+Apache Arrow's separate PyPI `26.0.1` wheel for CPython 3.14 and manylinux
+AArch64 also allocated successfully on 16 KiB pages. That wheel exposes mimalloc
+and the system pool. Keep the Conda packages in the existing lab314 installation.
+
+Run the read-only kernel diagnostic on the existing prefix:
+
+```sh
+/opt/lab314/bin/python -IB check_lab314.py --prefix /opt/lab314 --kernel-only
+```
+
+To run the native regression on a 16 KiB ARM64 host or guest, use the target
+Python from the repository root:
+
+```sh
+LAB314_ARM64_16K_PREFIX=/opt/lab314 /opt/lab314/bin/python -B -m unittest discover \
+  -s trixie/base/tests -p test_lab314_kernel.py -v
+```
 
 ## Identify ownership, then update a selected package
 
@@ -151,13 +203,14 @@ sudo /opt/lab314/bin/python -IB update_lab314.py --all \
     --apply --record-dir /absolute/new/full-update-records
 ```
 
-The normal installer's rerun requests this complete update explicitly; it is
-not a targeted Spyder-only operation. For targeted requests, the existing
+The normal Raspberry Pi installer rerun keeps installed scientific package
+versions. Use `sudo bash setup-rpi.sh --manage` and **Update All** for routine
+package maintenance. For targeted requests, the existing
 forward dependency closure may change. Other installed packages contribute
 only their declared dependency ranges to the temporary pip constraints. Their
 installed versions are not frozen. For example, an installed reverse-dependent
 Numba requirement may constrain a NumPy-only update; select both packages or
-rerun the installer for a full compatible resolution. A full update removes
+review a full update in the maintenance interface. A full update removes
 those old pip-side constraints because all pip-managed packages are selected.
 
 There are no unattended updates and no operations against `/opt/rpi`, the base
@@ -190,11 +243,15 @@ current compatible versions rather than forcing the old snapshot.
 
 ## Spyder IDE and kernel maintenance
 
-The IDE and scientific environment have separate update lifecycles. The
-current APT candidate is only 6.0.5; it is not a permanent IDE ceiling.
-The approved alternative uses the existing Conda infrastructure to manage a
-**separate, administrator-chosen** IDE prefix from conda-forge. No IDE is
-installed inside lab314 or `/opt/rpi`, and the APT IDE is retained as a fallback.
+For a current integrated lab314, use the normal Conda-owned update route.
+For example, `create_lab314_env.sh --package spyder --plan` previews changes
+to the IDE and its dependencies in that environment.
+
+### Legacy external IDE maintenance
+
+Older mixed Conda/pip environments can maintain a separate, administrator-chosen
+IDE prefix. Existing APT or external IDE installations retain their own
+lifecycle.
 
 ```sh
 IDE_PREFIX=/absolute/administrator/chosen/spyder-ide

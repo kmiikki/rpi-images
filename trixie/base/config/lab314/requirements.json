@@ -1,5 +1,10 @@
 {
   "python": "3.14.*",
+  "native": {
+    "opencv": "5.1.0",
+    "hdf5": "1.14.6",
+    "spyder": "6.1.8"
+  },
   "conda": [
     "python=3.14",
     "pip",
@@ -43,7 +48,14 @@
     "networkx": "networkx",
     "ExifRead": "exifread",
     "imageio-ffmpeg": "imageio_ffmpeg",
-    "PySimpleGUI": "PySimpleGUI"
+    "PySimpleGUI": "PySimpleGUI",
+    "shap": "shap",
+    "pywavelets": "pywt",
+    "optuna": "optuna",
+    "plotly": "plotly",
+    "hypothesis": "hypothesis",
+    "polars": "polars",
+    "xgboost": "xgboost"
   },
   "spyder_python": "/usr/bin/python3"
 }

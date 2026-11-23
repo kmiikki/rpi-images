@@ -1,7 +1,7 @@
 """Explicit real-display Spyder 6 acceptance; not run by unittest discovery.
 
-Run with the system Python that supplies Spyder and Qt. The custom kernel is
-selected independently. Uses an isolated SPYDER_CONFDIR under a NEW output dir.
+Run with the Python that supplies Spyder and Qt. Select its default interpreter
+or an explicit kernel separately. Uses an isolated SPYDER_CONFDIR under a NEW output dir.
 No packages, production configuration or interpreter files are modified.
 """
 import argparse
@@ -15,10 +15,14 @@ import traceback
 import uuid
 
 from spyder_acceptance_state import evaluate
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]/'install'))
+from diagnostics import redact
+from spyder_runtime import console_preferences, enable_console_compatibility
 
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument('output', type=Path)
 parser.add_argument('--interpreter', default='/opt/lab314/bin/python')
+parser.add_argument('--default-interpreter', action='store_true', help='test Spyder’s default selection against --interpreter')
 parser.add_argument('--reference-without-shapely', action='store_true')
 parser.add_argument('--negative-missing-variable', action='store_true')
 args = parser.parse_args()
@@ -27,13 +31,15 @@ out.mkdir(parents=True, exist_ok=False)
 os.environ['SPYDER_CONFDIR'] = str(out / 'config')
 os.environ['PYTHONDONTWRITEBYTECODE'] = '1'
 from spyder.config.manager import CONF
-for key, value in [('default', False), ('custom', True),
-                   ('custom_interpreter', args.interpreter),
-                   ('executable', args.interpreter)]:
-    CONF.set('main_interpreter', key, value)
+if not args.default_interpreter:
+    for key, value in [('default', False), ('custom', True),
+                       ('custom_interpreter', args.interpreter),
+                       ('executable', args.interpreter)]:
+        CONF.set('main_interpreter', key, value)
 CONF.set('main', 'prompt_on_exit', False)
 CONF.set('main', 'check_updates_on_startup', False)
-from spyder.app.utils import create_application, create_window
+enable_console_compatibility()
+from spyder.app.utils import create_application, create_splash_screen, create_window
 from spyder.app.mainwindow import MainWindow
 from spyder.app.cli_options import get_options
 from spyder.api.plugins import Plugins
@@ -45,12 +51,37 @@ state = dict(phase='startup', stage='first', started=time.monotonic(),
              deadline=time.monotonic() + 90, kernel=None, passed=[], result='FAIL')
 events = []
 observed_models = {}
+observed_handlers = set()
+children = {}
+previous_console = None
 
 
 def record(kind, **values):
     events.append(dict(kind=kind, t=round(time.monotonic() - state['started'], 3),
                        **values))
     (out / 'events.json').write_text(json.dumps(events, default=str, indent=2))
+
+
+def observe_console(console, shell):
+    global previous_console
+    for client in console.get_widget().clients:
+        handler = getattr(client.shellwidget, 'kernel_handler', None)
+        if handler is None or handler in observed_handlers:
+            continue
+        manager = getattr(handler, 'kernel_manager', None)
+        process = getattr(getattr(manager, 'provisioner', None), 'process', None)
+        if process is not None:
+            children[process.pid] = process
+        observed_handlers.add(handler)
+        for stream in ('stdout','stderr'):
+            getattr(handler, f'sig_{stream}').connect(
+                lambda message, stream=stream: record('kernel_'+stream, text=redact(message)[:12000]))
+    handler = getattr(shell, 'kernel_handler', None)
+    current = (len(console.get_widget().clients), str(getattr(handler, 'connection_state', 'none')))
+    if current != previous_console:
+        record('console-state', tabs=current[0], connection=current[1],
+               children={pid: process.poll() for pid,process in children.items()})
+        previous_console = current
 
 
 def finish(error=None):
@@ -115,8 +146,10 @@ def tick():
             if now > state['deadline']:
                 raise TimeoutError('window startup')
             return
+        state['gui_started'] = True
         console = w.get_plugin(Plugins.IPythonConsole)
         shell = console.get_current_shellwidget()
+        observe_console(console, shell)
         ve = w.get_plugin(Plugins.VariableExplorer)
         if state['phase'] == 'startup':
             if shell is not None and shell.spyder_kernel_ready:
@@ -140,8 +173,10 @@ def tick():
                     observed_models[model_id] += 1
 
                 ns.editor.source_model.modelReset.connect(updated)
-            rows = ([ns.editor.model.index(row, 0).data()
-                     for row in range(ns.editor.model.rowCount())] if ns else [])
+            model = ns.editor.model if ns else None
+            if callable(model):
+                model = model()
+            rows = [model.index(row, 0).data() for row in range(model.rowCount())] if model else []
             alive = bool(shell and shell.kernel_client and shell.kernel_client.is_alive())
             snap = dict(ready=bool(shell and shell.spyder_kernel_ready), alive=alive,
                         same_console=(shell is state['shell'] and ns is assigned
@@ -157,7 +192,7 @@ def tick():
             elapsed = now - state['sent']
             record('sample', stage=state['stage'], elapsed=elapsed, **snap)
             if shell:
-                (out / (state['stage'] + '-console.txt')).write_text(shell._control.toPlainText())
+                (out / (state['stage'] + '-console.txt')).write_text(redact(shell._control.toPlainText()))
             if (not state['requested'] and (out / (state['token'] + '.json')).exists()
                     and snap['ready'] and shell is state['shell']):
                 state['requested'] = True
@@ -206,13 +241,18 @@ def tick():
 
 
 record('start', spyder=md.version('spyder'), gui_python=sys.executable,
+       profile='isolated', preferences=console_preferences(CONF,sys.executable),
        interpreter=args.interpreter, reference_without_shapely=args.reference_without_shapely,
        negative_missing_variable=args.negative_missing_variable)
 timer = QTimer()
 timer.timeout.connect(tick)
 timer.start(250)
 options, remaining = get_options(['--new-instance'])
-create_window(MainWindow, app, None, options, remaining)
+create_window(MainWindow, app, create_splash_screen(), options, remaining)
+orphan_pids = [pid for pid,process in children.items() if process.poll() is None]
+if orphan_pids:
+    state['result'] = 'FAIL'
+    record('kernel-processes-still-running', pids=orphan_pids)
 (out / 'result.json').write_text(json.dumps(dict(result=state['result'],
-    stages=state['passed'], closed=True), indent=2))
+    gui_started=state.get('gui_started',False), stages=state['passed'], closed=not orphan_pids), indent=2))
 real_exit(0 if state['result'] == 'PASS' else 1)

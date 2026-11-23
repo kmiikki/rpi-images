@@ -16,13 +16,15 @@ echo "System Python minor version: $PY_MINOR"
 echo "Target environment: $ENV_PREFIX"
 
 echo
-echo "Installing required Raspberry Pi system Python packages..."
-sudo apt-get update
-sudo apt-get install -y \
-    python3-opencv \
-    python3-picamera2 \
-    python3-libcamera \
-    python3-serial
+if [[ ${RPI_HARDWARE_APT_READY:-0} != 1 ]]; then
+    echo "Installing required Raspberry Pi system Python packages..."
+    sudo apt-get update
+    sudo apt-get install -y \
+        python3-opencv \
+        python3-picamera2 \
+        python3-libcamera \
+        python3-serial
+fi
 
 if [[ -d "$ENV_PREFIX" ]]; then
     echo "ERROR: environment already exists: $ENV_PREFIX" >&2

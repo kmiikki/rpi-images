@@ -2,7 +2,7 @@
 
 This guide installs the scientific Python environment on a Raspberry Pi 4 or 5.
 Use GENERAL unless you need the predefined HOME or AALTO/CHEM environment.
-The optional camera environment and Scientific Imaging applications are separate.
+The hardware Python environment and Scientific Imaging applications have separate installation settings.
 
 ## 1. Prepare and boot the Raspberry Pi
 
@@ -27,36 +27,40 @@ cd rpi-images/trixie/base/install
 An extracted repository ZIP works too: open its `trixie/base/install` directory
 in the terminal, substituting the extracted folder name. Keep the full tree.
 
-## 3. Install
+## 3. Run the unified installer
+
+From `trixie/base/install`, run setup as the intended desktop user.
 
 ```bash
 sudo bash setup-rpi.sh
 ```
 
-Select **GENERAL** for an independent installation without site-specific defaults.
-HOME provides predefined home settings. AALTO provides the existing CHEM
-deployment settings. GENERAL needs no access to either environment.
+On first setup, choose your keyboard layout. Finnish is the default. **Show all
+available keyboard layouts** opens a searchable list. Setup applies the layout
+before other questions and keeps it for future runs. On a fresh system, setup
+refreshes the APT lists and applies a reviewed full OS upgrade before installing
+the scientific software. If hardware setup or the upgrade requires a reboot,
+confirm it or reboot manually, then run the same setup command again.
 
-Keep the existing Imager account and hostname unless you intend to change them.
-For the normal scientific workstation, include system dependencies, Conda,
-lab314 and Spyder. The default Spyder uses the APT IDE; leave the separate IDE
-prefix unset unless you maintain another IDE. Leave hardware, Wolfram,
-rpi-share and Imaging unselected unless needed. HOME/AALTO include rpi-share;
-select configuration later if no reviewed catalog is ready.
+When Finnish or Swedish is selected and LXTerminal is the default terminal,
+setup configures zoom in with **Ctrl + +**, zoom out with **Ctrl + −**, and
+reset with **Ctrl + 0** for the desktop user.
 
-Review the displayed account, SSH, NTP and component plan before confirming.
-The primary administrator retains the existing passwordless sudo policy, giving
-full administrative access. New accounts require interactive password entry;
-existing passwords are retained. SSH changes affect remote administration.
-No full OS upgrade is implicit. Existing valid environments are kept.
-If a stage fails, correct the reported cause and rerun the reviewed command.
+Choose **GENERAL** for an independent installation, **HOME** for home settings,
+or **AALTO** for the Aalto University CHEM settings. Review and approve the plan.
+The defaults install Scientific Python 3.14 with Spyder and the separate
+Raspberry Pi Python 3.13 environment. The approval prompt offers `customize`
+for changes to the defaults. [Advanced options](trixie/base/docs/unified-setup.md#advanced-installation-options)
 
 ## 4. Open a fresh terminal and verify
+
+On Raspberry Pi 5 Model B, check `ls -l /dev/i2c-1 /dev/spidev0.*` after the
+first-stage reboot, if required, and test typing in your chosen layout.
+[Hardware verification](trixie/base/docs/unified-setup.md#hardware-acceptance)
 
 Log out and back in if account/group or login-shell settings changed. Open a new
 terminal for shell activation and PATH changes. A hostname change may require
 reconnection or a reboot for all services; follow the installer's message.
-An unconditional reboot is not required.
 
 From the same repository's `trixie/base/install` directory:
 
@@ -64,19 +68,18 @@ From the same repository's `trixie/base/install` directory:
 bash verify_rpi_lab314.sh
 /opt/lab314/bin/python --version
 /opt/lab314/bin/python -c 'import numpy; print(numpy.__version__)'
-command -v spyder
-spyder
+rpi-lab314-spyder
 ```
 
-The verification script checks the scientific environment. Check that Spyder
-opens on the desktop; select `/opt/lab314/bin/python` as its Python interpreter
-under **Tools → Preferences → Python interpreter**, then restart its console.
-See [Spyder setup](trixie/base/docs/spyder-lab314.md) if the console cannot connect.
-The IDE and the scientific environment remain separate.
+The desktop menu also provides **Spyder (Scientific Python)**. In its IPython
+console, check that `import numpy, scipy, cv2` succeeds and that
+`sys.executable` points into `/opt/lab314`. [Spyder setup](trixie/base/docs/spyder-lab314.md)
 
 ## 5. Optional hardware and camera support
 
-Select hardware during setup, or add it later using:
+The hardware Python environment is selected by default. If you skipped it when
+customizing setup, enable it later using the same profile as the original
+installation. This example uses GENERAL.
 
 ```bash
 sudo bash setup-rpi.sh --profile GENERAL --hardware
@@ -92,6 +95,7 @@ Base setup does not automatically install the Scientific Imaging application sui
 
 ## Next steps
 
+- [Status, repair, updates and reset](trixie/base/docs/unified-setup.md#installation-lifecycle)
 - [Unified setup and recovery reference](trixie/base/docs/unified-setup.md)
 - [Create or reuse installation profiles](trixie/base/docs/profile-builder.md)
 - [Scientific Python maintenance](trixie/base/docs/lab314-maintenance.md)

@@ -1,0 +1,212 @@
+#!/usr/bin/python3 -I
+"""List, inspect, or select an installed XKB keyboard layout on Raspberry Pi OS."""
+
+import argparse
+import os
+from pathlib import Path
+import pwd
+import re
+import subprocess
+import sys
+import xml.etree.ElementTree as ET
+
+RULES = Path('/usr/share/X11/xkb/rules')
+SYSTEM = Path('/etc/default/keyboard')
+RASPI_CONFIG = Path('/usr/bin/raspi-config')
+SUDO = Path('/usr/bin/sudo')
+LABWC = Path('/usr/bin/labwc')
+GREETER = Path('/etc/xdg/labwc-greeter/environment')
+LABWC_DEFAULT = Path('/usr/share/labwc/environment')
+SYSTEM_KEYS = ('XKBLAYOUT', 'XKBMODEL', 'XKBVARIANT', 'XKBOPTIONS')
+DESKTOP_KEYS = tuple(key.replace('XKB', 'XKB_DEFAULT_') for key in SYSTEM_KEYS)
+CODE = re.compile(r'[A-Za-z0-9_][A-Za-z0-9_-]*')
+
+
+def read_layouts(path):
+    if path.suffix == '.xml':
+        root = ET.parse(path).getroot()
+        pairs = ((item.findtext('name', ''), item.findtext('description', ''))
+                 for item in root.findall('./layoutList/layout/configItem'))
+    else:
+        items = []
+        in_layouts = False
+        for line in path.read_text(encoding='utf-8').splitlines():
+            if line.startswith('!'):
+                in_layouts = line[1:].strip() == 'layout'
+            elif in_layouts and (fields := line.split(None, 1)) and len(fields) == 2:
+                items.append(fields)
+        pairs = items
+    return {code.strip(): description.strip() for code, description in pairs
+            if CODE.fullmatch(code.strip()) and description.strip()}
+
+
+def layouts():
+    for name in ('evdev', 'base'):
+        for suffix in ('.xml', '.lst'):
+            try:
+                result = read_layouts(RULES / (name + suffix))
+            except (OSError, UnicodeError, ET.ParseError):
+                continue
+            if result:
+                try:
+                    result.update(read_layouts(RULES / (name + '.extras.xml')))
+                except (OSError, UnicodeError, ET.ParseError):
+                    pass
+                return result
+    raise ValueError(f'No readable XKB layout database found in {RULES} (evdev or base rules).')
+
+
+def settings(path, keys):
+    """Read literal assignments without executing system or user configuration."""
+    try:
+        lines = path.read_text(encoding='utf-8').splitlines()
+    except FileNotFoundError:
+        return {}
+    result = {}
+    for line in lines:
+        key, separator, value = line.strip().partition('=')
+        if separator and key in keys:
+            match = re.fullmatch(r"""\s*(?:"([^"]*)"|'([^']*)'|([^\s#]*))\s*(?:#.*)?""", value)
+            result[key] = next((part for part in match.groups() if part is not None), '') if match else None
+    return result
+
+
+def user_environment():
+    if os.geteuid() == 0:
+        sudo_user = os.environ.get('SUDO_USER')
+        if not sudo_user or sudo_user == 'root':
+            return None
+        account = pwd.getpwnam(sudo_user)
+    else:
+        account = pwd.getpwuid(os.geteuid())
+    return Path(account.pw_dir) / '.config/labwc/environment'
+
+
+def desktop_paths():
+    user = user_environment()
+    greeter = GREETER if GREETER.exists() else LABWC_DEFAULT
+    paths = [user] if user is not None and (LABWC.exists() or user.exists()) else []
+    if greeter.exists():
+        paths.append(greeter)
+    return paths
+
+
+def layout_pending(layout):
+    if not CODE.fullmatch(layout) or layout not in layouts():
+        raise ValueError(f'Unknown XKB layout {layout!r}. Run rpi-keyboard --list for available layouts.')
+    system = settings(SYSTEM, SYSTEM_KEYS)
+    if system.get('XKBLAYOUT') is None:
+        raise ValueError(f'Cannot read a literal XKBLAYOUT assignment in {SYSTEM}.')
+    if os.geteuid() != 0 and LABWC.exists() and (config_home := os.environ.get('XDG_CONFIG_HOME')):
+        custom = Path(config_home) / 'labwc/environment'
+        if custom.is_absolute() and custom != user_environment() and custom.exists():
+            if settings(custom, DESKTOP_KEYS).get('XKB_DEFAULT_LAYOUT') != layout:
+                raise ValueError(f'Custom labwc configuration at {custom} requires manual review.')
+    if system['XKBLAYOUT'] != layout:
+        return True
+    return any(settings(path, DESKTOP_KEYS).get('XKB_DEFAULT_LAYOUT') != layout
+               for path in desktop_paths())
+
+
+def keyboard_backend():
+    try:
+        script = RASPI_CONFIG.read_text(encoding='utf-8')
+    except FileNotFoundError:
+        raise ValueError(f'{RASPI_CONFIG} is missing. Raspberry Pi OS raspi-config is required.') from None
+    required = (
+        r'^\s*nonint\s*\(\s*\)\s*\{',
+        r'^\s*nonint\s*(?:\|\s*batch\s*)?\)',
+        r'^\s*do_configure_keyboard\s*\(\s*\)\s*\{',
+    )
+    if not os.access(RASPI_CONFIG, os.X_OK) or not all(re.search(pattern, script, re.M) for pattern in required):
+        raise ValueError('Installed raspi-config does not expose a recognized non-interactive keyboard command.')
+    if LABWC.exists():
+        if not re.search(r'^\s*update_labwc_keyboard[ \t]*$', script, re.M):
+            raise ValueError('Installed raspi-config does not expose labwc keyboard updates.')
+        if not re.search(r'kill[^\n]*-HUP[^\n]*labwc|labwc[ \t]+--reconfigure', script):
+            raise ValueError('Installed raspi-config does not expose a recognized live labwc reload.')
+    return RASPI_CONFIG
+
+
+def current():
+    locations = [('System', SYSTEM, SYSTEM_KEYS)]
+    user = user_environment()
+    if user:
+        if os.geteuid() != 0 and (config_home := os.environ.get('XDG_CONFIG_HOME')):
+            config_dir = Path(config_home)
+            if config_dir.is_absolute():
+                user = config_dir / 'labwc/environment'
+        locations.append(('labwc user', user, DESKTOP_KEYS))
+    locations.extend(('labwc defaults', path, DESKTOP_KEYS) for path in
+                     (Path('/etc/xdg/labwc/environment'), GREETER, LABWC_DEFAULT) if path.exists())
+    for label, path, keys in locations:
+        values = settings(path, keys)
+        print(f'{label} stored configuration ({path}):')
+        if values:
+            for key, value in values.items():
+                print(f'  {key}={value!r}' if value is not None else f'  {key}: unreadable assignment')
+        else:
+            print('  No keyboard assignments found.')
+    print('Active session layout: unconfirmed. Test typing in the local desktop to verify.')
+
+
+def active_labwc():
+    if not LABWC.exists():
+        return False
+    sudo_user = os.environ.get('SUDO_USER') if os.geteuid() == 0 else None
+    uid = pwd.getpwnam(sudo_user).pw_uid if sudo_user and sudo_user != 'root' else os.geteuid()
+    for comm in Path('/proc').glob('[0-9]*/comm'):
+        try:
+            if comm.stat().st_uid == uid and comm.read_text().strip() == 'labwc':
+                return True
+        except OSError:
+            continue
+    return False
+
+
+def select(layout):
+    if not layout_pending(layout):
+        print(f'Keyboard layout {layout} is already stored. Active session layout is unconfirmed.')
+        return
+    command = [str(keyboard_backend()), 'nonint', 'do_configure_keyboard', layout]
+    live = active_labwc()
+    if os.geteuid() != 0:
+        if not os.access(SUDO, os.X_OK):
+            raise ValueError('Changing the layout requires sudo or a root invocation.')
+        command.insert(0, str(SUDO))
+    try:
+        subprocess.run(command, stdin=subprocess.DEVNULL, check=True)
+    except subprocess.CalledProcessError as exc:
+        raise ValueError(f'Non-interactive raspi-config keyboard command failed (exit {exc.returncode}).') from exc
+    if layout_pending(layout):
+        raise ValueError(f'raspi-config did not store layout {layout} in the system or labwc configuration.')
+    print(f'Keyboard layout {layout} stored. No keyboard reboot needed.')
+    if live:
+        print('raspi-config requested a live labwc reload; test typing to confirm the active layout.')
+    else:
+        print('No running labwc session for this user was detected; the active layout is unconfirmed.')
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(description=__doc__)
+    options = parser.add_mutually_exclusive_group()
+    options.add_argument('--list', action='store_true', help='list installed XKB layouts (default)')
+    options.add_argument('--current', action='store_true', help='show stored keyboard configuration')
+    options.add_argument('layout', nargs='?', help='set an XKB layout code (may request sudo)')
+    args = parser.parse_args(argv)
+    if args.current:
+        current()
+    elif args.layout is not None:
+        select(args.layout)
+    else:
+        print('Available keyboard layouts:\n\nCode        Description\n----        -----------')
+        for code, description in sorted(layouts().items()):
+            print(f'{code:<12}{description}')
+    return 0
+
+
+if __name__ == '__main__':
+    try:
+        sys.exit(main())
+    except (KeyError, OSError, ValueError) as exc:
+        sys.exit(f'rpi-keyboard: {exc}')

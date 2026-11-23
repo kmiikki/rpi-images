@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Spyder (Scientific Python)
+Exec=/usr/local/bin/rpi-lab314-spyder %F
+TryExec=/usr/local/bin/rpi-lab314-spyder
+Icon=applications-science
+Terminal=false
+NoDisplay=true

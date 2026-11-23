@@ -106,6 +106,17 @@ Expected example output:
 7919
 ```
 
+Run these checks as the intended desktop user. Test the desktop application
+separately if the package provides it. A practical graphics check is evaluating
+`Plot[Sin[x], {x, 0, 2 Pi}]` in a notebook and checking that a curve appears.
+Package availability, command-line evaluation and notebook operation are
+separate outcomes.
+
+The unified installer selects Wolfram by default under AALTO. GENERAL and HOME
+allow users to opt in. Selecting NO preserves any Wolfram installation already
+on the system. For a package installed and recorded by setup, review managed
+removal through `sudo bash setup-rpi.sh --manage --action remove --component wolfram --plan`.
+
 ## Notes about memory and storage
 
 Wolfram Engine is relatively heavy compared with the typical software needed for data logging, instrument control, or lightweight analysis.
@@ -127,3 +138,7 @@ This is one more reason why Wolfram Engine is kept outside the base image and in
 The Raspberry Pi Wolfram offering may include usage restrictions, including restrictions related to commercial use.
 
 Users are responsible for ensuring that their installation and use comply with the applicable Wolfram and Raspberry Pi licensing terms.
+Record any activation prompt as an authorization limitation. The staging ZIP
+contains the installer only. The optional software is downloaded from the
+configured Raspberry Pi OS repository.
+[Wolfram's Raspberry Pi licensing information](https://support.wolfram.com/373/)

@@ -27,6 +27,9 @@ class FakeHost:
     def __init__(self,invoker='alice',existing=(),fail=None):
         self.env={};self.calls=[];self.data=state(invoker);self.existing={str(p) for p in existing};self.fail=fail
     def snapshot(self):return copy.deepcopy(self.data)
+    def run_preboot(self, *, preview, layout=None, interactive=False, firmware=True):
+        return m.preboot.BootStatus.READY, layout or 'fi'
+    def native_lab314(self,prefix):return False
     def exists(self,path):return str(path) in self.existing
     def environment(self,prefix):return str(prefix) in self.existing
     def change_hostname(self,old,new):self.run(['hostnamectl','set-hostname',new])
@@ -114,7 +117,9 @@ class ProfileTests(unittest.TestCase):
             if prompt.startswith('Profile GENERAL'):return 'AALTO'
             if prompt.startswith('Additional sudo'):return 'admin2'
             return default
-        with patch.object(m,'ask',side_effect=answer):m.interactive(a,h.snapshot())
+        with patch.object(m,'ask',side_effect=answer):
+            m.interactive(a,h.snapshot())
+            m.customize(a,h.snapshot())
         p=m.resolve(a,h.snapshot(),h)
         self.assertEqual((p['school'],p['primary'],p['additional']),('CHEM','chem',['chem-it','admin2']))
         self.assertFalse(any('school' in prompt.lower() for prompt in prompts));self.assertEqual(h.calls,[])
@@ -123,6 +128,30 @@ class ProfileTests(unittest.TestCase):
         h=FakeHost();a=m.parser().parse_args(['--primary-user','alice','--plan'])
         with patch.object(m,'ask',side_effect=lambda prompt,default:'AALTO' if prompt.startswith('Profile GENERAL') else default):m.interactive(a,h.snapshot())
         p=m.resolve(a,h.snapshot(),h);self.assertEqual(p['primary'],'alice');self.assertEqual(p['additional'],['chem-it'])
+
+    def test_standard_interactive_asks_only_profile_and_approval(self):
+        for profile in ('GENERAL','HOME','AALTO'):
+            with self.subTest(profile=profile):
+                h=FakeHost();answers=[profile,'y']
+                with patch.object(sys.stdin,'isatty',return_value=True),patch.object(m,'ask',side_effect=answers) as ask, \
+                        patch.object(m,'apply',return_value=0) as apply,contextlib.redirect_stdout(io.StringIO()):
+                    self.assertEqual(m.main([],h),0)
+                self.assertEqual(ask.call_count,2)
+                plan=apply.call_args.args[1]
+                self.assertEqual(plan['profile'],profile)
+                self.assertTrue(all(plan['components'][key] for key in ('system','conda','lab314','spyder','hardware')))
+                self.assertEqual(plan['components']['share'],profile!='GENERAL')
+
+    def test_customize_is_opt_in_and_can_disable_hardware(self):
+        h=FakeHost();approvals=iter(('customize','y'))
+        def answer(prompt,default):
+            if prompt.startswith('Apply this'):return next(approvals)
+            if prompt.startswith('Include hardware'):return 'n'
+            return default
+        with patch.object(sys.stdin,'isatty',return_value=True),patch.object(m,'ask',side_effect=answer), \
+                patch.object(m,'apply',return_value=0) as apply,contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(m.main([],h),0)
+        self.assertFalse(apply.call_args.args[1]['components']['hardware'])
 
     def test_aalto_missing_primary_recovery_and_password_guards_preserved(self):
         h=FakeHost();h.data['accounts'].pop('chem');h.data['accounts'].pop('chem-it')
@@ -218,7 +247,7 @@ class ProfileTests(unittest.TestCase):
     def test_existing_environment_actions_keep(self):
         h=FakeHost(existing=['/opt/conda','/opt/lab314','/opt/rpi'])
         a,p=self.resolve('--profile','GENERAL','--hardware',host=h);s=dict(m.stages(a,p))
-        self.assertEqual(s['conda'],'KEEP');self.assertEqual(s['lab314'],'KEEP');self.assertEqual(s['hardware'],'KEEP')
+        self.assertEqual(s['conda'],'KEEP');self.assertIn('RECONCILE',s['lab314']);self.assertEqual(s['hardware'],'KEEP')
 
     def test_component_order(self):
         a,p=self.resolve('--profile','AALTO','--school','CHEM','--ide-prefix','/opt/example-ide','--hardware')
@@ -228,7 +257,7 @@ class ProfileTests(unittest.TestCase):
     def test_spyder_targeted_kernel_after_selected_ide(self):
         h=FakeHost(existing=['/opt/conda','/opt/lab314'])
         a,p=self.resolve('--profile','GENERAL','--ide-prefix','/opt/example-ide',host=h)
-        s=dict(m.stages(a,p));self.assertEqual(s['lab314'],'KEEP');self.assertIn('spyder-kernel',s)
+        s=dict(m.stages(a,p));self.assertIn('RECONCILE',s['lab314']);self.assertIn('spyder-kernel',s)
 
     def test_lab314_python_series_and_components_remain_independent(self):
         self.assertIn("['3','14']",(BASE/'install/update_lab314.py').read_text())
@@ -252,11 +281,17 @@ class OrchestrationTests(unittest.TestCase):
         return result,host,ensure
 
     def test_standard_workflow_calls_existing_scripts(self):
-        result,h,ensure=self.execute(['--profile','GENERAL','--hardware'])
+        result,h,ensure=self.execute(['--profile','GENERAL'])
         self.assertEqual(result,0)
         text='\n'.join(' '.join(x) for x in h.calls)
         for name in ('pre_profile.sh','install_rpi_base.sh','install_conda_base.sh','create_lab314_env.sh','create_rpi_env.sh','verify_rpi_lab314.sh','verify_rpi_env.sh'):self.assertIn(name,text)
         self.assertEqual(h.env['DO_APT_UPGRADE'],'0');ensure.assert_any_call('alice',admin=True,passwordless=True)
+        self.assertEqual(h.env['INSTALL_APT_SPYDER'],'0')
+        self.assertIn('--require-spyder',text)
+        self.assertIn('/usr/local/share/applications/rpi-lab314-spyder.desktop',text)
+        self.assertIn('/usr/local/lib/rpi-images/spyder_runtime.py',text)
+        desktop=(BASE/'config/lab314/spyder.desktop').read_text().splitlines()
+        self.assertIn('Exec=/usr/local/bin/rpi-lab314-spyder',desktop)
 
     def test_hostname_changes_only_on_explicit_difference(self):
         _,h,_=self.execute(['--profile','GENERAL']);self.assertFalse(any('set-hostname' in x for x in h.calls))

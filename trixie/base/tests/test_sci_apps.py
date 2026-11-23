@@ -186,21 +186,22 @@ conda() {
             for selected in (False,True):
                 with self.subTest(name=name,selected=selected),tempfile.TemporaryDirectory(dir='/tmp') as tmp:
                     root=Path(tmp)
-                    run=INSTALL/f'run_rpi_{name}.sh'
-                    shutil.copy(run,root/run.name)
+                    legacy=root/'legacy'
+                    legacy.mkdir()
+                    run=legacy/f'run_rpi_{name}.sh'
+                    shutil.copy(INSTALL/'legacy'/run.name,run)
                     log=root/'steps'
                     for step in INSTALL.glob('*.sh'):
-                        if step!=run:
-                            (root/step.name).write_text(f'echo "{step.name} $*" >> "{log}"\n')
+                        (root/step.name).write_text(f'echo "{step.name} $*" >> "{log}"\n')
                     args=[]
                     if selected:
                         entry=root/'apps/capture/rpi/cam-imgcheck/cam-imgcheck.py'
                         entry.parent.mkdir(parents=True);entry.touch()
                         args=['--with-cam-imgcheck',tmp]
-                    subprocess.run(['bash',root/run.name,*args],check=True,capture_output=True)
+                    subprocess.run(['bash',run,*args],check=True,capture_output=True)
                     steps=[line.split()[0] for line in log.read_text().splitlines()]
                     expected=[f'pre_{name}.sh','install_rpi_base.sh','install_conda_base.sh','create_lab314_env.sh']
-                    if selected and not Path('/opt/rpi').exists():
+                    if selected and not Path('/opt/rpi').is_dir():
                         expected+=['create_rpi_env.sh']
                     expected+=['enable_lab314_autoactivate_rpi.sh','install_envrun.sh']
                     if selected:expected+=['install_sci_apps.sh']

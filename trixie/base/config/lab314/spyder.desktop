@@ -1,0 +1,14 @@
+[Desktop Entry]
+Type=Application
+Name=Spyder (Scientific Python)
+Comment=Open Spyder in the Raspberry Pi scientific Python environment
+Exec=/usr/local/bin/rpi-lab314-spyder
+TryExec=/usr/local/bin/rpi-lab314-spyder
+Icon=applications-science
+Terminal=false
+Categories=Development;Science;
+Actions=Trace;
+
+[Desktop Action Trace]
+Name=Trace current desktop profile
+Exec=/usr/local/bin/rpi-lab314-spyder --rpi-desktop-diagnostics

@@ -20,10 +20,10 @@ if [[ ${PRE_ACCOUNTS_MANAGED:-0} != 1 ]]; then
         /usr/bin/python3 -B "$here/rpi-accounts.py" --create "$user" --admin --apply
     done
 fi
-install -d -m 755 /etc/systemd/timesyncd.conf.d
-printf '[Time]\nNTP=%s\nFallbackNTP=time.cloudflare.com pool.ntp.org\n' "$ntp" > /etc/systemd/timesyncd.conf.d/60-rpi-scientific.conf
-systemctl restart systemd-timesyncd
-timedatectl set-ntp true
+if [[ ${RPI_PROFILE_CONFIG_MANAGED:-0} != 1 ]]; then
+    install -d -m 755 /etc/systemd/timesyncd.conf.d
+    printf '[Time]\nNTP=%s\nFallbackNTP=time.cloudflare.com pool.ntp.org\n' "$ntp" > /etc/systemd/timesyncd.conf.d/60-rpi-scientific.conf
+fi
 # Keep the existing bounded clock-readiness wait before HTTPS/APT bootstrap.
 wait_for_time_sync() {
     local attempt
@@ -37,12 +37,18 @@ wait_for_time_sync() {
     echo 'WARNING: Time synchronization is still pending after 60 seconds.' >&2
     return 1
 }
-wait_for_time_sync || true
+if [[ ${RPI_PROFILE_RESTART_NTP:-1} == 1 ]]; then
+    systemctl restart systemd-timesyncd
+    timedatectl set-ntp true
+    wait_for_time_sync || true
+fi
 case ${SSH_POLICY:-keep} in
     keep) echo 'KEEP existing SSH policy' ;;
     enable)
-        apt-get update
-        apt-get install -y openssh-server
+        if [[ ${RPI_PROFILE_CONFIG_MANAGED:-0} != 1 ]]; then
+            apt-get update
+            apt-get install -y openssh-server
+        fi
         systemctl enable --now ssh
         ;;
     disable) systemctl disable --now ssh ;;

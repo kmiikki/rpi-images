@@ -1,6 +1,7 @@
 # Raspberry Pi `rpi` Environment
 
-`/opt/rpi` is an optional Raspberry Pi hardware bridge environment. Current
+`/opt/rpi` is the Raspberry Pi hardware bridge environment. Unified setup selects
+it by default, and `--no-hardware` omits it. Current
 Trixie uses Python 3.13 here, separate from lab314 Python 3.14.10.
 
 It is used when Python scripts need Raspberry Pi OS APT Python modules such as:
@@ -28,6 +29,13 @@ It intentionally does **not** see:
 
 This keeps the Python 3.14 analysis environment isolated from Raspberry Pi OS
 system Python packages.
+In the hybrid installation, Picamera2 and libcamera come from Raspberry Pi OS.
+An `import picamera2` failure under `/opt/lab314/bin/python` is expected.
+Use the hardware bridge to run camera code:
+
+```bash
+/opt/rpi/bin/python -c 'from picamera2 import Picamera2'
+```
 
 `/opt/rpi` is different. It is created with the same Python minor version as:
 

@@ -24,7 +24,6 @@ okular
 ffmpeg
 vlc
 gimp
-exiftool
 libimage-exiftool-perl
 exiv2
 imagemagick

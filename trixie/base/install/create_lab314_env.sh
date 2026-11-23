@@ -5,13 +5,16 @@ prefix=/opt/lab314
 mode=normal
 selected=()
 plan=0
+spyder=integrated
 while (($#)); do
     case "$1" in
         --package) selected+=(--package "$2"); shift 2 ;;
         --plan) plan=1; shift ;;
         --snapshot) mode=snapshot; shift ;;
         --prefix) prefix=$2; shift 2 ;;
-        --help) echo "Usage: $0 [--prefix ABSOLUTE_NEW_PREFIX] [--snapshot] [--package REQUIREMENT ...] [--plan]"; exit 0 ;;
+        --without-spyder) spyder=none; shift ;;
+        --external-spyder) spyder=external; shift ;;
+        --help) echo "Usage: $0 [--prefix ABSOLUTE_NEW_PREFIX] [--without-spyder | --external-spyder] [--snapshot] [--package REQUIREMENT ...] [--plan]"; exit 0 ;;
         *) echo "Unknown option: $1" >&2; exit 2 ;;
     esac
 done
@@ -49,10 +52,35 @@ fi
 ((${#selected[@]} == 0 && plan == 0)) || { echo 'Targeted updates/plans require an existing prefix.' >&2; exit 2; }
 [[ -d $(dirname -- "$prefix") && -x /opt/conda/bin/conda ]] || { echo 'Missing parent or Conda' >&2; exit 2; }
 # Keep caches with the selected installation filesystem, never base's cache.
-mkdir -m 700 -- "$prefix"
 work=$(mktemp -d -- "$(dirname -- "$prefix")/.lab314-build.XXXXXXXX")
-trap 'rm -rf -- "$work"' EXIT
+trap 'code=$?; rm -rf -- "$work" || true; exit "$code"' EXIT
 export CONDA_PKGS_DIRS="$work/conda-pkgs" TMPDIR="$work" PIP_NO_CACHE_DIR=1 PIP_DISABLE_PIP_VERSION_CHECK=1 PYTHONDONTWRITEBYTECODE=1 OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1
+if [[ $mode == normal && $spyder != external ]]; then
+    echo "Scientific Python: preparing Conda requirements for $prefix" >&2
+    df -Pk -- "$work" >&2
+    specs=$(/opt/conda/bin/python -B "$here/lab314_policy.py" --conda-specs "$spyder")
+    mapfile -t conda_specs <<< "$specs"
+    create=(/opt/conda/bin/conda create -y --no-default-packages --override-channels -c conda-forge -p "$prefix")
+    flags=()
+    if [[ $spyder == integrated ]]; then
+        echo "Scientific Python: resolving ARM64 packages and stable Spyder" >&2
+        if "${create[@]}" --dry-run --json "${conda_specs[@]}" > "$work/solver.json"; then
+            :
+        else
+            status=$?
+            cat "$work/solver.json" >&2 || true
+            exit "$status"
+        fi
+        version=$(/opt/conda/bin/python -B "$here/lab314_policy.py" --solved-spyder < "$work/solver.json")
+        conda_specs[-1]="spyder==$version"
+        flags+=(--require-spyder)
+    fi
+    echo "Scientific Python: downloading and installing resolved packages" >&2
+    "${create[@]}" "${conda_specs[@]}"
+    echo "Scientific Python: checking installed packages, graphics backend and IPython kernel" >&2
+    check --functional --require-opencv-target "${flags[@]}"
+    exit 0
+fi
 if [[ $mode == snapshot ]]; then
     /opt/conda/bin/conda create -y --no-default-packages -p "$prefix" --file "$here/../config/lab314/conda-linux-aarch64.txt"
     "$prefix/bin/python" -m pip install --only-binary=:all: --require-hashes --no-deps -r "$here/../config/lab314/wheels.txt"

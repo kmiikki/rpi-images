@@ -8,10 +8,19 @@ Trixie Full, 64-bit**: cameras, data loggers and other research instruments.
 
 ## Unified initial installation
 
-The unified installer is the recommended initial installation method for the
-independent GENERAL, HOME and AALTO profiles after Raspberry Pi Imager and first
-boot. See [Installation profiles](#installation-profiles) below for the command
-and the [unified setup guide](docs/unified-setup.md) for previews and options.
+Use `setup-rpi.sh` for all new Raspberry Pi OS Trixie installations with GENERAL,
+HOME or AALTO after Raspberry Pi Imager and first boot. See [Installation profiles](#installation-profiles)
+for the command and the [unified setup guide](docs/unified-setup.md) for preboot,
+previews and options.
+On Raspberry Pi 5, setup offers the stock 4 KiB kernel for Spyder's formatted
+Help. Boot changes need approval and a reboot. The same install command resumes
+setup after reboot and reconciles managed settings on future runs.
+On the tr3 test system, Spyder formatted Help worked with 4 KiB pages while a
+standalone WebEngine diagnostic failed. Use Plain Text Help or an external
+browser if an embedded view is blank.
+[Kernel compatibility and rollback](docs/unified-setup.md#raspberry-pi-5-kernel-compatibility)
+For a prepared card moving between Pi 4 and Pi 5 Model B, use
+[`adapt-rpi-model.sh`](docs/unified-setup.md#moving-an-installation-card-between-raspberry-pi-4-and-5).
 From `trixie/base`, preview with `bash install/setup-rpi.sh --profile GENERAL --primary-user YOUR_USER --plan`.
 Existing component installers remain independently usable. See the
 [architecture](docs/unified-architecture.md) and
@@ -22,10 +31,10 @@ Existing component installers remain independently usable. See the
 Creates and manages:
 
 - `/opt/conda`: existing Miniforge/Conda bootstrap
-- `/opt/lab314`: rolling Python 3.14 scientific environment with GUI opencv-python
-- optional `/opt/rpi`: Raspberry Pi hardware bridge environment
+- `/opt/lab314`: rolling Python 3.14 scientific environment with Spyder and GUI OpenCV
+- `/opt/rpi`: separately configurable Raspberry Pi hardware bridge, selected by default
 - `envrun`: launcher for running Python scripts in a selected environment
-- Spyder integration with external Spyder and environment-specific kernels
+- Spyder IDE and its matching kernel in the scientific environment
 - consistent system tooling for research, data transfer, logging, and analysis
 
 Key design goals:
@@ -45,9 +54,9 @@ Key design goals:
 
 `/opt/lab314` is the default clean analysis environment. Normal installation
 resolves current compatible direct requirements, keeps Python within 3.14,
-and preserves the GUI `opencv-python` distribution. Compatible maintenance
-updates are accepted by normal verification. Spyder-kernel compatibility follows
-the selected external IDE's metadata, not a permanently fixed IDE version.
+and installs GUI OpenCV with a Qt6 build from Conda-forge. Compatible maintenance
+updates are accepted by normal verification. The integrated Spyder installation
+and compatible kernel use package metadata from the same environment.
 
 The historical November 2026 snapshot (Python 3.14.10, OpenCV 5.0.0,
 Shapely 2.2.0 / GEOS 3.14.1, 145 distributions) remains available explicitly
@@ -169,6 +178,10 @@ docs/rpi-env.md
 
 ```text
 install/
+├── setup-rpi.sh
+├── legacy/
+│   ├── run_rpi_home.sh
+│   └── run_rpi_aalto.sh
 ├── packages/
 │   ├── common-apt.txt
 │   ├── rpi-apt.txt
@@ -187,8 +200,6 @@ install/
 ├── verify_rpi_lab314.sh
 ├── verify_rpi_env.sh
 ├── verify_lab314_ubuntu.sh
-├── run_rpi_home.sh
-├── run_rpi_aalto.sh
 ├── run_ubuntu_lab314.sh
 ├── uninstall_lab314_env.sh
 ├── uninstall_rpi_env.sh
@@ -232,14 +243,18 @@ New users: follow the [hands-on installation guide](../../QUICKSTART.md).
 
 ## Installation profiles
 
-The unified installer is the recommended initial installation method for all users:
+Use `setup-rpi.sh` for a new Raspberry Pi OS Trixie installation and choose a
+profile at the prompt. On Raspberry Pi 5 Model B, preboot configures the keyboard
+and interfaces first. If it pauses for a reboot, repeat the same command to
+resume the profile already selected.
+[Preboot and hardware verification](docs/unified-setup.md#first-boot-preparation-on-raspberry-pi-5)
 
 ```bash
 cd rpi-images/trixie/base/install
 sudo bash setup-rpi.sh
 ```
 
-The installer interactively offers three independent, fully supported profiles:
+The unified installer supports three profiles.
 
 | Profile | Purpose |
 |---|---|
@@ -252,10 +267,10 @@ Run them from the parent of the repository directory; if the extracted folder
 has a different name, substitute that name in the `cd` command. Keep the full
 directory tree together; Git metadata is not required.
 
-The installation scripts locate their dependencies relative to their own directory. Git metadata is not required.
-Review the unified installer's account and component plan before confirming.
-Do not rerun full provisioning merely to update an application; use the
-[unified setup and maintenance guide](docs/unified-setup.md).
+Review the account and component plan before confirming. Rerun the command
+from a newer ZIP to reconcile configuration. Open `--manage` and choose
+**Update All** for reviewed software updates.
+[Reruns and maintenance](docs/unified-setup.md#reruns-and-maintenance)
 
 The Raspberry Pi install path sets up:
 
@@ -270,20 +285,11 @@ envrun
 
 ### Legacy / profile-specific installation scripts
 
-The existing HOME/AALTO scripts remain available for compatibility and maintenance.
-From `rpi-images/trixie/base/install`, choose the appropriate script:
-
-```bash
-sudo bash run_rpi_home.sh
-sudo bash run_rpi_aalto.sh
-```
-
-Review the existing `pre_home.sh` / `pre_aalto.sh` account, NTP and SSH policy
-before provisioning with these scripts. Their profile defaults are retained;
-`PRIMARY_USER` can be supplied explicitly. A full APT upgrade through these
-scripts still requires the existing `DO_APT_UPGRADE=1` selection.
-
-By default the base profiles omit the hardware environment and applications. For a fresh installation, select cam-imgcheck before provisioning with `sudo bash run_rpi_home.sh --with-cam-imgcheck /path/to/scientific-imaging` (or the Aalto script). For an existing Pi, use the application-only step. [Application installation and rollback](docs/sci-apps.md)
+The historical [HOME](install/legacy/run_rpi_home.sh) and
+[AALTO](install/legacy/run_rpi_aalto.sh) scripts are archived under
+`install/legacy/` for existing installations. They retain their profile defaults
+and options, including `PRIMARY_USER`, `DO_APT_UPGRADE=1` and
+`--with-cam-imgcheck PATH`.
 
 ---
 
@@ -609,10 +615,8 @@ envrun rpi /tmp/envrun_test.py
 
 ```text
 /opt/lab314:
-  pip opencv-python
-  Python 3.14 maintenance series / compatible GUI opencv-python
-  isolated from system Python
-  current installer already sets up DejaVu font links and xcb sitecustomize
+  Conda-forge OpenCV with Qt6 HighGUI in new environments
+  Python 3.14 maintenance series, isolated from system Python
 
 /opt/rpi:
   APT python3-opencv
@@ -630,47 +634,19 @@ docs/rpi-env.md
 
 ---
 
-## Uninstall
+## Maintenance and uninstall
 
-### Remove optional rpi environment only
-
-```bash
-cd install
-sudo bash uninstall_rpi_env.sh
-```
-
-### Remove envrun only
+Open the installer’s maintenance menu to inspect, verify, update, repair or remove
+selected components, or preview a full scientific environment reset.
 
 ```bash
 cd install
-sudo bash uninstall_envrun.sh
+sudo bash setup-rpi.sh --manage
 ```
 
-### Full Raspberry Pi uninstall
-
-Home profile:
-
-```bash
-cd install
-sudo bash run_uninstall_rpi_home.sh
-```
-
-Aalto profile:
-
-```bash
-cd install
-sudo bash run_uninstall_rpi_aalto.sh
-```
-
-Optional flags:
-
-```bash
---remove-apt
---purge
-```
-
-Use full uninstall with care. It removes `/opt/lab314`, `/opt/rpi`, and
-`/opt/conda`.
+Reset keeps the keyboard layout, accounts and user data. The
+[lifecycle guide](docs/unified-setup.md#installation-lifecycle) explains how the
+installer checks ownership and shows any changes it cannot safely reverse.
 
 ---
 

@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Resolve the shared installer scripts from the parent install directory.
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 
 # Usage: run_rpi_home.sh [--with-cam-imgcheck SCIENTIFIC_IMAGING]
 app_source=
@@ -16,7 +17,7 @@ fi
 bash "$SCRIPT_DIR/pre_home.sh"
 bash "$SCRIPT_DIR/install_rpi_base.sh"
 bash "$SCRIPT_DIR/install_conda_base.sh"
-bash "$SCRIPT_DIR/create_lab314_env.sh"
+bash "$SCRIPT_DIR/create_lab314_env.sh" --external-spyder
 if [[ -n $app_source && ! -d /opt/rpi ]]; then bash "$SCRIPT_DIR/create_rpi_env.sh"; fi
 bash "$SCRIPT_DIR/enable_lab314_autoactivate_rpi.sh"
 bash "$SCRIPT_DIR/install_envrun.sh"

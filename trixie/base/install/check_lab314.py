@@ -16,6 +16,9 @@ parser.add_argument('--contract', type=Path, default=Path(__file__).resolve().pa
 parser.add_argument('--snapshot', action='store_true')
 parser.add_argument('--prefix', type=Path, required=True)
 parser.add_argument('--functional', action='store_true')
+parser.add_argument('--require-spyder', action='store_true')
+parser.add_argument('--require-opencv-target', action='store_true', help='verify the current Conda OpenCV and HDF5 versions')
+parser.add_argument('--kernel-only', action='store_true', help='show native dependency and kernel startup diagnostics')
 args = parser.parse_args()
 contract = json.loads(args.contract.read_text()) if args.snapshot else None
 errors = []
@@ -23,8 +26,33 @@ if Path(sys.prefix).resolve() != args.prefix.resolve():
     errors.append(f'prefix {sys.prefix} != {args.prefix}')
 if errors:sys.exit('\n'.join(errors))
 sys.path.insert(0,str(Path(__file__).resolve().parent))
-from lab314_policy import version_errors, policy
+from lab314_kernel import (KernelProbeError, diagnose_dependencies, kernel_environment, large_arm64_pages,
+                           probe_spyder_kernel, run_native_check)
+
+if args.kernel_only:
+    with tempfile.TemporaryDirectory(prefix='lab314-kernel-') as tmp:
+        root = Path(tmp)
+        env = kernel_environment(root)
+        diagnose_dependencies(args.prefix, env)
+        try:
+            probe_spyder_kernel(root, env)
+        except KernelProbeError as error:
+            sys.exit(str(error))
+    print('PASS Spyder kernel startup and scientific imports')
+    sys.exit(0)
+
+from lab314_policy import version_errors, policy, native_layout
+native = native_layout(args.prefix)
 versions={d.metadata['Name']:d.version for d in md.distributions()}
+integrated_spyder = native and 'spyder' in versions
+if native:
+    for name in ('opencv-python','opencv-python-headless','spyder','spyder-kernels'):
+        if name in versions and (md.distribution(name).read_text('INSTALLER') or '').strip() != 'conda':
+            errors.append(f'{name} must be owned by Conda in the integrated environment')
+if args.require_spyder and (not integrated_spyder or not os.access(args.prefix/'bin/spyder',os.X_OK)):
+    errors.append('Conda Spyder and its launcher must be present in the scientific environment')
+if args.require_opencv_target and (args.snapshot or not native):
+    errors.append('The OpenCV target check requires the current Conda Scientific Python environment')
 if args.snapshot:
     # Keep --contract support for exact snapshot diagnostics.
     if platform.python_version()!=contract['python']:errors.append('Snapshot Python version differs')
@@ -33,7 +61,7 @@ if args.snapshot:
         except md.PackageNotFoundError:found='MISSING'
         if found!=expected:errors.append(name+': snapshot version differs: '+found)
 else:
-    try:errors.extend(version_errors(versions,platform.python_version()))
+    try:errors.extend(version_errors(versions,platform.python_version(),native=native))
     except ValueError as exc:errors.append(str(exc))
     for module in policy()['pip'].values():
         try:importlib.import_module(module)
@@ -41,14 +69,24 @@ else:
     if not errors:
         cv=importlib.import_module('cv2')
         gui=re.search(r'GUI:\s*(\S+)',cv.getBuildInformation())
-        if not gui or gui[1].upper() in ('NONE','NO'):
+        if not gui or gui[1].upper() in ('NONE','NO') or (native and gui[1].upper() != 'QT6'):
             errors.append('OpenCV must provide a graphical Linux backend')
+        if args.require_opencv_target:
+            target=policy()['native']
+            hdf5_versions={'h5py':importlib.import_module('h5py').version.hdf5_version,
+                           'netCDF4':importlib.import_module('netCDF4').__hdf5libversion__}
+            if cv.__version__!=target['opencv']:
+                errors.append(f"OpenCV version {cv.__version__}; expected {target['opencv']}")
+            for module,found in hdf5_versions.items():
+                if found!=target['hdf5']:
+                    errors.append(f"{module} uses HDF5 {found}; expected {target['hdf5']}")
 if '/usr/lib/python3/dist-packages' in sys.path:
     errors.append('Debian dist-packages leaks into lab314')
-for font in ('DejaVuSans.ttf', 'DejaVuSans-Bold.ttf'):
-    path = Path(sys.prefix)/'lib/python3.14/site-packages/cv2/qt/fonts'/font
-    if not path.is_file():
-        errors.append('missing Qt font '+str(path))
+if not native:
+    for font in ('DejaVuSans.ttf', 'DejaVuSans-Bold.ttf'):
+        path = Path(sys.prefix)/'lib/python3.14/site-packages/cv2/qt/fonts'/font
+        if not path.is_file():
+            errors.append('missing Qt font '+str(path))
 if errors:
     sys.exit('\n'.join(errors))
 subprocess.run([sys.executable, '-B', '-m', 'pip', 'check'], check=True)
@@ -83,6 +121,11 @@ with tempfile.TemporaryDirectory(prefix='lab314-check-') as tmp:
     import h5py
     import pyarrow as pa
     import pyarrow.parquet as pq
+    if native and large_arm64_pages() and pa.default_memory_pool().backend_name == 'jemalloc':
+        # The affected libarrow embeds its own allocator. Limit the fallback to
+        # this verification process and keep the installed packages intact.
+        pa.set_memory_pool(pa.system_memory_pool())
+        print('PyArrow verification uses the system memory pool on ARM64 with large pages.')
     import tifffile
     import openpyxl
     import xlsxwriter
@@ -142,7 +185,14 @@ with tempfile.TemporaryDirectory(prefix='lab314-check-') as tmp:
     assert Image.open(root/'plot.png').size[0] > 0
     with h5py.File(root/'a.h5', 'w') as h:
         h['im'] = im
+    with h5py.File(root/'a.h5', 'r') as h:
         assert np.array_equal(h['im'][:], im)
+    with netCDF4.Dataset(root/'direct.nc', 'w', format='NETCDF4') as nc:
+        nc.createDimension('sample', 2)
+        nc.createVariable('data', 'i4', ('sample',))[:] = [6, 7]
+    with netCDF4.Dataset(root/'direct.nc', 'r') as nc:
+        assert np.array_equal(nc.variables['data'][:], [6, 7])
+    print('PASS HDF5 and NetCDF read/write', h5py.version.hdf5_version, netCDF4.__hdf5libversion__)
     frame = pd.DataFrame({'value': [1, 2]})
     pq.write_table(pa.Table.from_pandas(frame), root/'a.parquet')
     assert pq.read_table(root/'a.parquet').to_pandas().equals(frame)
@@ -161,4 +211,21 @@ with tempfile.TemporaryDirectory(prefix='lab314-check-') as tmp:
     assert list(idx.intersection((0, 0, 1, 1))) == [1]
     assert formulaic.model_matrix('value', frame).shape[0] == 2
     assert networkx.shortest_path(networkx.path_graph(3), 0, 2) == [0, 1, 2]
-    print('PASS scientific calculations, Numba JIT, files, image/video and measurement data')
+    print('Scientific Python environment: PASS (calculations, Numba JIT, files, image/video and measurement data)')
+    if native:
+        env = kernel_environment(root)
+        try:
+            run_native_check([sys.executable,'-IB','-X','faulthandler','-c',
+                'import cv2,numpy; cv2.namedWindow("probe"); cv2.imshow("probe",numpy.zeros((32,32),numpy.uint8)); '
+                'cv2.waitKey(1); cv2.destroyAllWindows()'], env, 'OpenCV Qt6 HighGUI')
+            print('PASS OpenCV Qt6 HighGUI offscreen window')
+            if integrated_spyder:
+                run_native_check([sys.executable,'-IB','-X','faulthandler','-c',
+                    'import spyder; from qtpy import QtWebEngineWidgets,QtWidgets; '
+                    'app=QtWidgets.QApplication([]); widget=QtWidgets.QWidget(); widget.show(); app.processEvents()'],
+                    env, 'Spyder package and Qt bindings')
+                print('Spyder package installation: PASS (imports)')
+                probe_spyder_kernel(root, env)
+                print('Jupyter kernel API test: PASS (NumPy, SciPy and OpenCV)')
+        except KernelProbeError as error:
+            sys.exit(str(error))

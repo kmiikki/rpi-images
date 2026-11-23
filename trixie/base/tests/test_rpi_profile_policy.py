@@ -44,21 +44,29 @@ class ShellPolicyTests(unittest.TestCase):
             self.assertFalse(list(root.glob('.rpi-policy.*')))
 
 
-class LegacyAaltoTests(unittest.TestCase):
-    def legacy(self,overrides=None,wrapper=False,arguments=()):
+class LegacyInstallerTests(unittest.TestCase):
+    def legacy(self,overrides=None,wrapper=False,arguments=(),profile='AALTO'):
         with tempfile.TemporaryDirectory() as tmp:
             root=Path(tmp);log=root/'calls';result_file=root/'resolved'
+            install_dir=root/'source tree'/'install'
+            legacy_dir=install_dir/'legacy'
+            legacy_dir.mkdir(parents=True)
+            guard=f'pre_{profile.lower()}.sh'
+            wrapper_name=f'run_rpi_{profile.lower()}.sh'
             # Execute the real legacy guard and pure account module. Every possible
             # provisioning target is a temporary recording stub, never host code.
-            for name in ('pre_aalto.sh','rpi_accounts.py','run_rpi_aalto.sh'):
-                (root/name).write_bytes((BASE/'install'/name).read_bytes())
-            (root/'pre_profile.sh').write_text('printf "%s|%s|%s\n" "$1" "$PRIMARY_USER" "$EXTRA_SUDO_USERS" > "$POLICY_RESULT"\nprintf "pre\n" >> "$POLICY_LOG"\n')
+            for name in (guard,'rpi_accounts.py'):
+                (install_dir/name).write_bytes((BASE/'install'/name).read_bytes())
+            legacy_wrapper=legacy_dir/wrapper_name
+            legacy_wrapper.write_bytes((BASE/'install/legacy'/wrapper_name).read_bytes())
+            (install_dir/'pre_profile.sh').write_text('printf "%s|%s|%s\n" "$1" "$PRIMARY_USER" "$EXTRA_SUDO_USERS" > "$POLICY_RESULT"\nprintf "pre\n" >> "$POLICY_LOG"\n')
             for name in ('install_rpi_base.sh','install_conda_base.sh','create_lab314_env.sh','enable_lab314_autoactivate_rpi.sh','install_envrun.sh','verify_rpi_lab314.sh'):
-                (root/name).write_text('printf "%s\n" "'+name+'" >> "$POLICY_LOG"\n')
+                (install_dir/name).write_text('printf "%s\n" "'+name+'" >> "$POLICY_LOG"\n')
             env=dict(os.environ,PRIMARY_USER='chem',POLICY_RESULT=str(result_file),POLICY_LOG=str(log),PYTHONDONTWRITEBYTECODE='1')
             for name in ('PRIMARY_USER','EXTRA_SUDO_USERS','PRE_ACCOUNTS_MANAGED','NTP_PRIMARY','SSH_POLICY'):env.pop(name,None)
             env.update(overrides or {})
-            result=subprocess.run(['bash',str(root/('run_rpi_aalto.sh' if wrapper else 'pre_aalto.sh')),*arguments],env=env,capture_output=True,text=True)
+            script=legacy_wrapper if wrapper else install_dir/guard
+            result=subprocess.run(['bash',str(script),*arguments],cwd=root,env=env,capture_output=True,text=True)
             return result,result_file.read_text().strip() if result_file.exists() else None,log.read_text().splitlines() if log.exists() else []
 
     def test_legacy_unsupported_school_arguments_fail_before_any_stage(self):
@@ -90,6 +98,12 @@ class LegacyAaltoTests(unittest.TestCase):
     def test_legacy_full_wrapper_starts_with_the_validated_policy(self):
         result,plan,calls=self.legacy(wrapper=True)
         self.assertEqual(result.returncode,0,result.stderr);self.assertEqual(plan,'AALTO|chem|chem-it')
+        self.assertEqual(calls,['pre','install_rpi_base.sh','install_conda_base.sh','create_lab314_env.sh','enable_lab314_autoactivate_rpi.sh','install_envrun.sh','verify_rpi_lab314.sh'])
+
+    def test_legacy_home_wrapper_resolves_shared_components_from_another_directory(self):
+        result,plan,calls=self.legacy({'SUDO_USER':'operator'},wrapper=True,profile='HOME')
+        self.assertEqual(result.returncode,0,result.stdout+result.stderr)
+        self.assertEqual(plan,'HOME|operator|')
         self.assertEqual(calls,['pre','install_rpi_base.sh','install_conda_base.sh','create_lab314_env.sh','enable_lab314_autoactivate_rpi.sh','install_envrun.sh','verify_rpi_lab314.sh'])
 
 

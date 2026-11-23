@@ -8,12 +8,55 @@ import subprocess
 from packaging.requirements import Requirement
 from packaging.utils import canonicalize_name as canonical
 from packaging.specifiers import SpecifierSet
+from packaging.version import Version
 
 CONFIG = Path(__file__).resolve().parents[1]/'config/lab314'
 
 
 def policy():
     return json.loads((CONFIG/'requirements.json').read_text())
+
+
+def opencv_specs():
+    versions = policy()['native']
+    return [f"opencv={versions['opencv']}=qt6*", f"hdf5={versions['hdf5']}"]
+
+
+def native_conda_specs(with_spyder=True):
+    config = policy()
+    specs = [*config['conda'], 'python-gil', *opencv_specs()]
+    specs.extend(name.lower() for name in config['pip'] if name != 'opencv-python')
+    if with_spyder:
+        specs.append(f"spyder=={config['native']['spyder']}")
+    return specs
+
+
+def native_layout(prefix):
+    return any(path for name in ('opencv','py-opencv','spyder')
+               for path in (Path(prefix)/'conda-meta').glob(f'{name}-[0-9]*.json'))
+
+
+def prefix_distributions(prefix):
+    root=prefix.resolve()
+    return (dist for dist in md.distributions()
+            if Path(dist.locate_file('')).resolve().is_relative_to(root))
+
+
+def missing_scientific_defaults(prefix):
+    """Find absent direct defaults. OpenCV has its own layout-specific installer."""
+    installed={canonical(dist.metadata['Name']) for dist in prefix_distributions(prefix)}
+    return [canonical(name) for name in policy()['pip']
+            if name!='opencv-python' and canonical(name) not in installed]
+
+
+def solved_spyder(plan):
+    for record in plan.get('actions', {}).get('LINK', []):
+        if record['name'] == 'spyder':
+            version = Version(record['version'])
+            if not (version.is_prerelease or version.is_devrelease):
+                return record['version']
+            raise ValueError(f'The conda-forge solve selected a non-stable Spyder version: {version}')
+    raise ValueError('The conda-forge solve did not select a Spyder package')
 
 
 def spyder_requirement():
@@ -40,20 +83,37 @@ def requirements():
     return list(policy()['pip'])+[spyder_requirement()]
 
 
-def version_errors(versions, python, snapshot=False):
+def version_errors(versions, python, snapshot=False, native=False):
     config = json.loads((CONFIG/'packages.json').read_text()) if snapshot else policy()
     expected = '=='+config['python']
     errors=[]
     if not SpecifierSet(expected).contains(python):errors.append('Unsupported Python '+python+'; required '+expected)
     versions={canonical(k):v for k,v in versions.items()}
-    specs=[k+'=='+v for k,v in config['packages'].items()] if snapshot else requirements()
+    if snapshot:
+        specs=[k+'=='+v for k,v in config['packages'].items()]
+    elif native:
+        specs=list(config['pip'])
+        # Conda OpenCV exports the opencv-python distribution metadata. Read
+        # Spyder's actual kernel constraint from the installed IDE in this prefix.
+        if 'spyder' in versions:
+            kernel_specs = [text for text in md.requires('spyder') or []
+                            if canonical(Requirement(text).name)=='spyder-kernels']
+            if not kernel_specs:errors.append('Integrated Spyder does not declare a kernel requirement')
+            if Version(versions['spyder']).is_prerelease:errors.append('Integrated Spyder must be a stable release')
+            specs.extend(kernel_specs)
+    else:
+        specs=requirements()
     for text in specs:
         req=Requirement(text);found=versions.get(canonical(req.name))
         if found is None or not req.specifier.contains(found,prereleases=True):
             errors.append(str(req)+': installed '+str(found))
     if not snapshot:
         for name in ('opencv-python-headless','opencv-contrib-python','opencv-contrib-python-headless'):
-            if canonical(name) in versions:errors.append('Conflicting OpenCV distribution: '+name)
+            if name not in versions:continue
+            # Conda-forge's Qt build publishes same-version headless metadata
+            # to satisfy dependency declarations; it ships only one cv2 module.
+            if native and name=='opencv-python-headless' and versions[name]==versions.get('opencv-python'):continue
+            errors.append('Conflicting OpenCV distribution: '+name)
     return errors
 
 
@@ -64,8 +124,7 @@ def ownership(prefix):
         record=json.loads(f.read_text());conda[record['name']]=record['version']
         owned.update(str((prefix/n).resolve()) for n in record.get('files',[]))
     pip={};frozen={}
-    for dist in md.distributions():
-        if not Path(dist.locate_file('')).resolve().is_relative_to(prefix.resolve()):continue
+    for dist in prefix_distributions(prefix):
         name=canonical(dist.metadata['Name'])
         overlap=any(str(Path(dist.locate_file(f)).resolve()) in owned for f in dist.files or [])
         if name in {canonical(n) for n in conda} or overlap:frozen[name]=dist.version
@@ -74,4 +133,10 @@ def ownership(prefix):
 
 
 if __name__=='__main__':
-    print('\n'.join(requirements()))
+    if sys.argv[1:] in (['--conda-specs','integrated'], ['--conda-specs','none']):
+        print('\n'.join(native_conda_specs(sys.argv[-1]=='integrated')))
+    elif sys.argv[1:] == ['--solved-spyder']:
+        try:print(solved_spyder(json.load(sys.stdin)))
+        except ValueError as error:sys.exit(f'ERROR: {error}')
+    else:
+        print('\n'.join(requirements()))

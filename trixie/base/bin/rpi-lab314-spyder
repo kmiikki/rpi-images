@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Remove cross-environment loader overrides before starting lab314's Python.
+RPI_SPYDER_REMOVED_LOADER_KEYS=
+for key in LD_LIBRARY_PATH LD_PRELOAD PYTHONHOME PYTHONPATH; do
+    if [[ -v "$key" ]]; then RPI_SPYDER_REMOVED_LOADER_KEYS+=" $key"; fi
+done
+export RPI_SPYDER_REMOVED_LOADER_KEYS
+unset LD_LIBRARY_PATH LD_PRELOAD PYTHONHOME PYTHONPATH
+exec /opt/lab314/bin/python -IB -X faulthandler /usr/local/lib/rpi-images/spyder_runtime.py "$@"

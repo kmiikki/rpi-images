@@ -6,6 +6,7 @@ import json
 import os
 from pathlib import Path
 import shutil
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -17,6 +18,15 @@ import lab314_policy as policy
 import update_lab314 as update
 ORIGINAL_SPYDER=policy.spyder_requirement
 KERNEL='spyder-kernels>=3.0.3,<3.1.0'
+ADDED_DEFAULTS={
+    'shap':'0.51.0', 'pywavelets':'1.9.0', 'optuna':'4.8.0', 'plotly':'6.8.0',
+    'hypothesis':'6.150.0', 'polars':'1.41.0', 'xgboost':'3.2.0',
+}
+
+
+def rolling_versions():
+    snapshot=json.loads((BASE/'config/lab314/packages.json').read_text())['packages']
+    return snapshot | ADDED_DEFAULTS
 
 
 class RollingTests(unittest.TestCase):
@@ -26,7 +36,7 @@ class RollingTests(unittest.TestCase):
         self.spy=patch.object(policy,'spyder_requirement',return_value=KERNEL);self.spy_mock=self.spy.start();self.addCleanup(self.spy.stop)
 
     def test_normal_accepts_updated_distribution_snapshot_rejects(self):
-        versions=json.loads((BASE/'config/lab314/packages.json').read_text())['packages']
+        versions=rolling_versions()
         versions['numpy']='2.5.5'
         self.assertEqual(policy.version_errors(versions,'3.14.11'),[])
         self.assertTrue(policy.version_errors(versions,'3.14.11',snapshot=True))
@@ -106,7 +116,7 @@ class RollingTests(unittest.TestCase):
         self.assertNotIn('numpy',' '.join(apply));self.assertFalse(any('apt' in c for c in calls))
 
     def test_spyder_605_to_618_compatibility_transition(self):
-        versions=json.loads((BASE/'config/lab314/packages.json').read_text())['packages']
+        versions=rolling_versions()
         self.assertFalse(policy.version_errors(versions,'3.14.10'))
         self.spy_mock.return_value='spyder-kernels>=3.1.0,<3.2.0'
         self.assertTrue(any('spyder-kernels' in e for e in policy.version_errors(versions,'3.14.10')))
@@ -183,20 +193,178 @@ class RollingTests(unittest.TestCase):
             with self.subTest(snapshot=snapshot),tempfile.TemporaryDirectory(dir=self.root) as tmp:
                 root=Path(tmp);install=root/'install';install.mkdir();shutil.copytree(BASE/'config',root/'config')
                 log=root/'calls';prefix=root/'prefix'
-                conda=root/'conda';conda.write_text('#!/bin/bash\nprintf "%s\\n" "$*" >> "'+str(log)+'"\nmkdir -p "'+str(prefix)+'/bin"\ncp "'+str(root/'python')+'" "'+str(prefix)+'/bin/python"\n')
+                conda=root/'conda';conda.write_text('#!/bin/bash\nprintf "%s\\n" "$*" >> "'+str(log)+'"\n'
+                    'if [[ " $* " == *" --dry-run "* ]]; then echo \'{"actions":{"LINK":[{"name":"spyder","version":"6.1.8"}]}}\'; exit 0; fi\n'
+                    'mkdir -p "'+str(prefix)+'/bin"\ncp "'+str(root/'python')+'" "'+str(prefix)+'/bin/python"\n')
                 conda.chmod(0o755)
                 (root/'python').write_text('#!/bin/bash\nprintf "%s\\n" "$*" >> "'+str(log)+'"\n');(root/'python').chmod(0o755)
                 fake=root/'bin';fake.mkdir();(fake/'uname').write_text('#!/bin/sh\necho aarch64\n');(fake/'uname').chmod(0o755)
-                (install/'lab314_policy.py').write_text('print("numpy")\n')
-                source=(BASE/'install/create_lab314_env.sh').read_text().replace('/opt/conda/bin/conda',str(conda))
+                shutil.copy(BASE/'install/lab314_policy.py',install)
+                source=(BASE/'install/create_lab314_env.sh').read_text().replace('/opt/conda/bin/conda',str(conda)).replace('/opt/conda/bin/python',sys.executable)
                 (install/'create.sh').write_text(source)
-                import subprocess
                 result=subprocess.run(['bash',str(install/'create.sh'),'--prefix',str(prefix),*(['--snapshot'] if snapshot else [])],env=dict(os.environ,PATH=str(fake)+':/usr/bin:/bin'),capture_output=True,text=True)
                 self.assertEqual(result.returncode,0,result.stderr)
                 text=log.read_text()
                 self.assertEqual('--file' in text,snapshot);self.assertEqual('--require-hashes' in text,snapshot)
-                self.assertEqual('--initialize' in text,not snapshot)
-                if not snapshot:self.assertIn('python=3.14',text)
+                self.assertNotIn('--initialize',text)
+                if not snapshot:
+                    for expected in ('python=3.14','opencv=5.1.0=qt6*','hdf5=1.14.6','--dry-run',
+                                     'spyder==6.1.8','--require-spyder','--require-opencv-target'):
+                        self.assertIn(expected,text)
+
+    def test_creation_preserves_failure_code_and_identifies_subphase(self):
+        cases = (
+            ('solver', 17, 'resolving ARM64', 'solver diagnostic'),
+            ('download', 18, 'downloading and installing', 'download diagnostic'),
+            ('verify', 19, 'checking installed packages', 'verification diagnostic'),
+        )
+        install = self.root/'install'
+        install.mkdir()
+        shutil.copytree(BASE/'config', self.root/'config')
+        shutil.copy(BASE/'install/lab314_policy.py', install)
+        fake = self.root/'bin'
+        fake.mkdir()
+        uname = fake/'uname'
+        uname.write_text('#!/bin/sh\necho aarch64\n')
+        uname.chmod(0o755)
+        conda = fake/'conda'
+        conda.write_text('''#!/bin/bash
+if [[ " $* " == *" --dry-run "* ]]; then
+    if [[ $FAILED_PHASE == solver ]]; then echo 'solver diagnostic'; exit 17; fi
+    echo '{"actions":{"LINK":[{"name":"spyder","version":"6.1.8"}]}}'
+else
+    mkdir -p "$TEST_PREFIX/bin"
+    if [[ $FAILED_PHASE == download ]]; then echo 'download diagnostic' >&2; exit 18; fi
+    printf '#!/bin/bash\necho "verification diagnostic" >&2\nexit 19\n' > "$TEST_PREFIX/bin/python"
+    chmod +x "$TEST_PREFIX/bin/python"
+fi
+''')
+        conda.chmod(0o755)
+        script = install/'create.sh'
+        script.write_text((BASE/'install/create_lab314_env.sh').read_text()
+                          .replace('/opt/conda/bin/conda',str(conda))
+                          .replace('/opt/conda/bin/python',sys.executable))
+        for phase, code, heading, diagnostic in cases:
+            with self.subTest(phase=phase):
+                prefix = self.root/phase
+                result = subprocess.run(['bash',script,'--prefix',prefix],capture_output=True,text=True,
+                                        env=dict(os.environ,PATH=f'{fake}:/usr/bin:/bin',
+                                                 FAILED_PHASE=phase,TEST_PREFIX=str(prefix)))
+                self.assertEqual(result.returncode,code,result.stderr)
+                self.assertIn(heading,result.stderr)
+                self.assertIn(diagnostic,result.stderr)
+                self.assertEqual(prefix.exists(),phase!='solver')
+                self.assertEqual(list(self.root.glob('.lab314-build.*')),[])
+
+    def test_native_spyder_and_kernel_compatibility_without_system_ide(self):
+        versions=rolling_versions()
+        versions.update(spyder='6.1.8', **{'spyder-kernels':'3.1.7'})
+        with patch.object(policy.md,'requires',return_value=['spyder-kernels>=3.1,<3.2']):
+            self.assertEqual(policy.version_errors(versions,'3.14.10',native=True),[])
+            versions['spyder-kernels']='3.2.0'
+            self.assertTrue(policy.version_errors(versions,'3.14.10',native=True))
+        self.spy_mock.assert_not_called()
+        self.assertIn('opencv=5.1.0=qt6*',policy.native_conda_specs())
+        self.assertIn('hdf5=1.14.6',policy.native_conda_specs())
+        self.assertIn('spyder==6.1.8',policy.native_conda_specs())
+        self.assertNotIn('spyder==6.1.8',policy.native_conda_specs(with_spyder=False))
+        with self.assertRaisesRegex(ValueError,'non-stable'):
+            policy.solved_spyder({'actions':{'LINK':[{'name':'spyder','version':'6.2.0a1'}]}})
+
+    def test_approved_defaults_are_required_in_each_native_install(self):
+        prior=json.loads((BASE/'config/lab314/packages.json').read_text())['packages']
+        self.assertEqual(policy.version_errors(prior,'3.14.10',native=True),
+                         [f'{name}: installed None' for name in ADDED_DEFAULTS])
+        for include_spyder in (False,True):
+            self.assertLessEqual(set(ADDED_DEFAULTS),set(policy.native_conda_specs(include_spyder)))
+        self.assertEqual(policy.policy()['pip']['pywavelets'],'pywt')
+
+    def test_default_reconciliation_without_missing_packages_does_no_package_work(self):
+        records=self.root/'record'
+        arguments=['update','--prefix',str(self.prefix),'--add-defaults','--apply','--record-dir',str(records)]
+        with (patch.object(sys,'prefix',str(self.prefix)),patch.object(sys,'argv',arguments),
+              patch.object(update.platform,'python_version',return_value='3.14.10'),
+              patch.object(update,'missing_scientific_defaults',return_value=[]),
+              patch.object(update,'ownership') as ownership,
+              patch.object(update.subprocess,'run') as run,contextlib.redirect_stdout(io.StringIO())):
+            update.main()
+        ownership.assert_not_called()
+        run.assert_not_called()
+        self.assertFalse(records.exists())
+
+    def test_default_reconciliation_freezes_existing_builds_and_requires_requested_links(self):
+        records=self.root/'record'
+        args=['update','--prefix',str(self.prefix),'--add-defaults','--apply','--record-dir',str(records)]
+        plan={'success':True,'actions':{'LINK':[dict(name='plotly',version='6.8.0',build_string='build')]}}
+        inventory=({'python':'3.14.10','opencv':'5.1.0','numpy':'2.5.5'}, {}, {})
+        with (patch.object(sys,'prefix',str(self.prefix)),patch.object(sys,'argv',args),
+              patch.object(update.platform,'python_version',return_value='3.14.10'),
+              patch.object(update,'missing_scientific_defaults',return_value=['plotly']),
+              patch.object(update,'ownership',return_value=inventory),patch.dict(os.environ,{},clear=True),
+              patch.object(update,'check_conda_files'),patch.object(update.subprocess,'run') as run,
+              patch.object(update.subprocess,'check_output',side_effect=['','',json.dumps(plan),json.dumps(plan)]) as solver,
+              contextlib.redirect_stdout(io.StringIO())):
+            update.main()
+        commands=[entry.args[0] for entry in solver.call_args_list]
+        self.assertIn('--freeze-installed',commands[2])
+        self.assertIn('plotly',commands[2])
+        self.assertIn('--offline',commands[3])
+        self.assertNotIn('numpy',commands[2])
+        self.assertNotIn('shap',commands[2])
+        self.assertTrue(any('--offline' in entry.args[0] for entry in run.call_args_list))
+        with self.assertRaisesRegex(ValueError,'replace installed'):
+            update.validate_additions({'actions':{'LINK':[{'name':'numpy'}]}},inventory[0],['plotly'])
+        with self.assertRaisesRegex(ValueError,'required packages: plotly'):
+            update.validate_additions({'actions':{}},inventory[0],['plotly'])
+
+    def test_native_update_keeps_python_and_graphical_opencv_in_conda(self):
+        inventory=({'python':'3.14.10','opencv':'5.0.0','spyder':'6.1.8'}, {}, {})
+        solved=json.dumps({'success':True,'actions':{'LINK':[]}})
+        with patch.object(sys,'prefix',str(self.prefix)),patch.object(sys,'argv',['update','--prefix',str(self.prefix),'--all']), \
+                patch.object(update.platform,'python_version',return_value='3.14.10'), \
+                patch.object(update,'ownership',return_value=inventory),patch.dict(os.environ,{},clear=True), \
+                patch.object(update.subprocess,'check_output',return_value=solved) as solver, \
+                patch.object(update.subprocess,'run') as apply,contextlib.redirect_stdout(io.StringIO()):
+            update.main()
+        for spec in ('--dry-run','--update-all','python=3.14','python-gil','opencv=5.1.0=qt6*',
+                     'hdf5=1.14.6','spyder'):
+            self.assertIn(spec,solver.call_args.args[0])
+        self.spy_mock.assert_not_called()
+        apply.assert_not_called()
+
+    def test_opencv_upgrade_can_replace_hdf5_dependents_and_displays_the_downgrade(self):
+        inventory=({'python':'3.14.10','opencv':'5.0.0','hdf5':'2.2.0','spyder':'6.1.8'}, {}, {})
+        unlink=[dict(name='hdf5',version='2.2.0',build_string='new')]
+        link=[dict(name='hdf5',version='1.14.6',build_string='old')]
+        plan={'success':True,'actions':{'UNLINK':unlink,'LINK':link}}
+        args=['update','--prefix',str(self.prefix),'--package','opencv']
+        with (patch.object(sys,'prefix',str(self.prefix)), patch.object(sys,'argv',args),
+              patch.object(update.platform,'python_version',return_value='3.14.10'),
+              patch.object(update,'ownership',return_value=inventory), patch.dict(os.environ,{},clear=True),
+              patch.object(update.subprocess,'check_output',return_value=json.dumps(plan)) as solver,
+              contextlib.redirect_stdout(io.StringIO()) as output):
+            update.main()
+        command=solver.call_args.args[0]
+        for spec in ('opencv=5.1.0=qt6*','hdf5=1.14.6','h5py','netcdf4','spyder==6.1.8'):
+            self.assertIn(spec,command)
+        self.assertNotIn('--freeze-installed',command)
+        self.assertIn('downgrade      hdf5: 2.2.0 new -> 1.14.6 old',output.getvalue())
+        self.assertIn(update.conda_plan_token(update.conda_transaction(plan)),output.getvalue())
+
+    def test_opencv_upgrade_refuses_a_changed_transaction_before_installing(self):
+        inventory=({'python':'3.14.10','opencv':'5.0.0','spyder':'6.1.8'}, {}, {})
+        plan={'success':True,'actions':{'LINK':[dict(name='opencv',version='5.1.0',build_string='qt6_build')]}}
+        args=['update','--prefix',str(self.prefix),'--package','opencv','--apply','--record-dir',
+              str(self.root/'record'),'--approved-conda-plan','0'*64]
+        with (patch.object(sys,'prefix',str(self.prefix)), patch.object(sys,'argv',args),
+              patch.object(update.platform,'python_version',return_value='3.14.10'),
+              patch.object(update,'ownership',return_value=inventory), patch.dict(os.environ,{},clear=True),
+              patch.object(update.subprocess,'check_output',side_effect=['', '', json.dumps(plan)]),
+              patch.object(update.subprocess,'run') as apply,
+              contextlib.redirect_stdout(io.StringIO())):
+            with self.assertRaisesRegex(ValueError,'Review this OpenCV transaction'):
+                update.main()
+        apply.assert_not_called()
 
 
 if __name__=='__main__':unittest.main()

@@ -103,17 +103,21 @@ class KernelCompatibilityTests(unittest.TestCase):
                 patch.object(preboot,'kernel_release',return_value=self.release), \
                 patch.object(preboot.os,'sysconf',return_value=16384) as page_size, \
                 patch.object(preboot.platform,'release',return_value='old-rpi-2712') as kernel:
+            self.assertIn('change required',preboot.kernel_status(None,'one'))
             self.assertEqual(preboot.configure_kernel(approve=lambda:False,pending=None,boot_id='one'),'deferred')
             self.assertEqual(self.firmware.read_text(),self.original)
             self.assertEqual(preboot.configure_kernel(approve=lambda:True,pending=None,boot_id='one'),'changed')
             backups=list(self.firmware.parent.glob('config.txt.preboot.bak.*'))
             self.assertEqual([p.read_text() for p in backups],[self.original])
+            self.assertIn('Reboot required',preboot.kernel_status('one','one'))
+            self.assertIn('Unexpected',preboot.kernel_status('one','two'))
             approve=Mock(side_effect=AssertionError('already selected'))
             self.assertEqual(preboot.configure_kernel(approve=approve,pending='one',boot_id='one'),'reboot')
             with self.assertRaisesRegex(ValueError,'After reboot'):
                 preboot.configure_kernel(approve=approve,pending='one',boot_id='two')
             page_size.return_value=4096
             kernel.return_value=self.release
+            self.assertIn('Ready – stock v8',preboot.kernel_status('one','two'))
             self.assertEqual(preboot.configure_kernel(approve=approve,pending='one',boot_id='two'),'ready')
             self.assertEqual(list(self.firmware.parent.glob('config.txt.preboot.bak.*')),backups)
 
@@ -236,6 +240,7 @@ class PrebootTests(unittest.TestCase):
             'settings':lambda *args:{'XKBLAYOUT':self.current_layout},
             'SYSTEM':None,'SYSTEM_KEYS':None,
         }))
+        stack.enter_context(patch.object(setup_rpi,'locale_environment',side_effect=dict))
         self.run = stack.enter_context(patch.object(preboot.subprocess, 'run'))
         self.run.side_effect=lambda command, **kwargs:setattr(self,'current_layout',command[-1])
         stack.enter_context(patch('builtins.input',return_value=''))
@@ -353,12 +358,12 @@ class PrebootTests(unittest.TestCase):
         self.ensure_user.assert_not_called()
         self.assertEqual(self.host.calls, [])
 
-    def test_two_stage_install_runs_keyboard_before_any_prompt_and_resumes_after_reboot(self):
+    def test_two_stage_install_applies_keyboard_after_approval_and_resumes_after_reboot(self):
         def answer(prompt,default):
-            self.assertEqual(self.firmware.read_text(), ENABLED + STOCK)
-            self.assertEqual(self.module_file.read_text(), 'i2c-dev\n')
-            self.assertTrue(self.keyboard.exists())
             if prompt.startswith('Reboot now'):
+                self.assertEqual(self.firmware.read_text(), ENABLED + STOCK)
+                self.assertEqual(self.module_file.read_text(), 'i2c-dev\n')
+                self.assertTrue(self.keyboard.exists())
                 self.run.assert_called_once_with([str(self.keyboard), 'fi'], check=True)
                 return 'n'
             if prompt.startswith('Profile GENERAL'):
@@ -367,11 +372,18 @@ class PrebootTests(unittest.TestCase):
                 return 'y'
             self.fail(f'unexpected question: {prompt}')
         output = io.StringIO()
+        def initial_answer(prompt, default):
+            if not prompt.startswith('Reboot now'):
+                self.assertEqual(self.firmware.read_text(), STOCK)
+                self.assertFalse(self.module_file.exists())
+                self.assertFalse(self.keyboard.exists())
+                self.run.assert_not_called()
+            return answer(prompt, default)
         with redirect_stdout(output), patch.object(sys.stdin, 'isatty', return_value=True), \
-                patch.object(setup_rpi,'ask',side_effect=answer) as prompt:
+                patch.object(setup_rpi,'ask',side_effect=initial_answer) as prompt:
             self.assertEqual(setup_rpi.main([], self.host), 0)
             self.assertEqual([entry.args[0] for entry in prompt.call_args_list],
-                             ['Profile GENERAL / HOME / AALTO','Apply this installation plan? y/N/customize','Reboot now? y/N'])
+                             ['Profile GENERAL / HOME / AALTO','Apply this installation plan? y/N/customize/share','Reboot now? y/N'])
         self.assertIn('Software installation is paused',output.getvalue())
         self.assertIn('INSTALLATION PLAN',output.getvalue())
         self.ensure_user.assert_not_called()
@@ -395,7 +407,6 @@ class PrebootTests(unittest.TestCase):
         self.assertIn('Both interface device nodes are present', report)
 
     def test_declining_combined_plan_leaves_preboot_and_profile_untouched(self):
-        self.host.data['model']='development workstation'
         with redirect_stdout(io.StringIO()), patch.object(sys.stdin, 'isatty', return_value=True), \
                 patch('builtins.input', return_value='n'):
             self.assertEqual(setup_rpi.main(['--profile', 'GENERAL'], self.host), 0)

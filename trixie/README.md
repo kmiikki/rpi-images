@@ -19,10 +19,10 @@ New users: follow the [hands-on installation guide](../QUICKSTART.md).
 
 ## Installation profiles
 
-Use `setup-rpi.sh` for all new Raspberry Pi OS Trixie installations. Setup offers
-keyboard layout selection before asking for a profile. On Raspberry Pi 5 Model B
-it also initializes the hardware interfaces. If setup pauses for a reboot, run
-the same command again after reboot.
+Use `setup-rpi.sh` for all new Raspberry Pi OS Trixie installations. Choose a
+profile and approve the plan before setup applies your keyboard layout and
+initializes the Raspberry Pi 5 Model B hardware interfaces. If setup pauses for
+a reboot, run the same command again afterward.
 
 ```bash
 cd rpi-images/trixie/base/install

@@ -176,6 +176,22 @@ class IntegrationTests(unittest.TestCase):
             self.data['settings']['share'].update(source=kind,path=str(setup.BASE/f'config/rpi-share.example.{kind}'))
             a=self.parse('--plan');h=FakeHost();p=setup.resolve(a,h.snapshot(),h)
             self.assertIsNotNone(p['config']);self.assertEqual(h.calls,[])
+
+    def test_profile_file_discovers_by_default_and_explicit_cli_json_overrides_it(self):
+        self.data = profiles.builtin('HOME')
+        root = self.path.parent
+        discovered = root/'rpi-share.home.json'
+        explicit = root/'reviewed.json'
+        for path in (discovered, explicit):
+            path.write_bytes((setup.BASE/'config/rpi-share.example.json').read_bytes())
+        host = FakeHost()
+        with contextlib.chdir(root):
+            plan = setup.resolve(self.parse('--plan'), host.snapshot(), host)
+        self.assertEqual(plan['config_path'], discovered)
+        self.data['settings']['share'].update(source='json', path=str(discovered))
+        with patch.object(setup, 'discover_share_catalogs', side_effect=AssertionError('explicit source')):
+            plan = setup.resolve(self.parse('--plan', '--share-json', str(explicit)), host.snapshot(), host)
+        self.assertEqual(plan['config_path'], explicit)
     def test_cli_overrides_scalars_booleans_repeats_and_share_group(self):
         s=self.data['settings'];s.update(additional_users=['fileadmin'],ssh='disable',ntp_servers=['file.example.invalid'])
         s['components'].update(hardware=True,share=True);s['share'].update(source='json',path='/nonexistent/catalog.json',users=['fileadmin']);s['imaging']['apps']=['file-app']

@@ -26,9 +26,10 @@ done
 install -d -m 755 "$prefix/bin" "$prefix/share/rpi-share/examples"
 install -m 755 "$base/bin/rpi-share" "$base/bin/rpi-share-builder.py" "$prefix/bin/"
 install -m 644 "$base/bin/rpi_share_catalog.py" "$prefix/bin/"
-for path in "$base"/config/rpi-share.example.* "$base/config/rpi-share.schema.json"; do
+for name in rpi-share.example.csv rpi-share.example.json rpi-share.schema.json; do
+    path="$base/config/$name"
     [[ -f $path ]] || continue
-    destination="$prefix/share/rpi-share/examples/$(basename -- "$path")"
+    destination="$prefix/share/rpi-share/examples/$name"
     [[ ! -L $destination ]] || { echo 'Symlinked example refused' >&2; exit 1; }
     install -m 644 "$path" "$destination"
 done

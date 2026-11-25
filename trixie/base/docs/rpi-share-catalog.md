@@ -34,22 +34,20 @@ script-local setup continues unchanged while no system file exists; administrato
 introducing a system catalog should use `--config` where that old fallback must
 remain selected. Run ordinary network access as the researcher, not through sudo.
 
-Actual site CSV/JSON inventories may live in `/etc/rpi-share/` or a user's own
-configuration directory and remain outside Git. Existing public
-`config/rpi-share.home.json` and `rpi-share.aalto.json` are retained unchanged.
+Keep production inventories outside Git, for example in `/etc/rpi-share/` or a
+private administrator directory. The repository provides the generic
+`config/rpi-share.example.json` and CSV equivalent. To create a production
+catalog, copy the JSON example outside Git, edit its hosts and destinations,
+and validate it with the builder. See
+[the installer's profile-specific filenames and search locations](unified-setup.md#share-configuration-and-ownership).
 
 ## Export, edit and regenerate
 
 ```sh
-python3 ../bin/rpi-share-builder.py --json ../config/rpi-share.home.json \
-  --output /absolute/local/rpi-share.home.csv
-python3 ../bin/rpi-share-builder.py --csv /absolute/local/rpi-share.home.csv \
-  --output /absolute/local/rpi-share.home.roundtrip.json
-
-python3 ../bin/rpi-share-builder.py --json ../config/rpi-share.aalto.json \
-  --output /absolute/local/rpi-share.aalto.csv
-python3 ../bin/rpi-share-builder.py --csv /absolute/local/rpi-share.aalto.csv \
-  --output /absolute/local/rpi-share.aalto.roundtrip.json
+python3 ../bin/rpi-share-builder.py --json ../config/rpi-share.example.json \
+  --output /absolute/local/catalog.csv
+python3 ../bin/rpi-share-builder.py --csv /absolute/local/catalog.csv \
+  --output /absolute/local/rpi-share.json
 
 # Preview output without a filesystem change:
 python3 ../bin/rpi-share-builder.py --csv /absolute/local/shares.csv --plan

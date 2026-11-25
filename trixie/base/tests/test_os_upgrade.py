@@ -61,6 +61,35 @@ class UpgradeTests(unittest.TestCase):
             patcher.start()
             self.addCleanup(patcher.stop)
 
+    def test_approved_country_applies_before_first_reboot_and_verifies_on_resume(self):
+        self.host.wlan_state=lambda: wire.copy()
+        wire=dict(stored='',country='00',blocks=[('1','0')],radio='disabled')
+        args=m.parser().parse_args(['--profile','HOME','--share-later','--yes','--wlan-country','SE'])
+        run=self.host.run
+        def execute(command,**options):
+            if 'do_wifi_country' in command:
+                wire.update(stored=command[-1],country=command[-1])
+            if 'unblock' in command:
+                wire.update(blocks=[('0','0')])
+            if command[0]=='nmcli':
+                wire.update(radio='enabled')
+            return run(command,**options)
+        with patch.object(self.host,'run',side_effect=execute), \
+                patch.object(m.wlan,'read_state',side_effect=lambda host:host.wlan_state()), \
+                patch.object(m.wlan,'boot_id',side_effect=lambda:self.boot), redirect_stdout(io.StringIO()) as out:
+            self.assertEqual(m.normal_setup(args,self.host.snapshot(),self.host,True,True),0)
+            self.assertEqual(self.store.data['wlan_country'],'SE')
+            self.assertIn('post-reboot verification pending',out.getvalue())
+            self.boot='boot-two'
+            def resume(a,plan,state,host):
+                self.assertEqual(plan['wlan_country'],'SE')
+                self.assertIn('verified after reboot',m.apply_wlan(host,plan,self.store))
+                return 0
+            with patch.object(m,'apply',side_effect=resume) as apply:
+                self.assertEqual(m.normal_setup(m.parser().parse_args(['--yes']),self.host.snapshot(),self.host,True,True),0)
+                apply.assert_called_once()
+        self.assertEqual(sum('do_wifi_country' in args for args in self.host.calls),1)
+
     def perform(self, approve=lambda:True, approve_removals=lambda _packages:False):
         return upgrade.run(self.host,self.store,m.lifecycle.apt_inventory,approve,approve_removals,first_install=True)
 

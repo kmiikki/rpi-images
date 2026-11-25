@@ -46,8 +46,8 @@ case ${SSH_POLICY:-keep} in
     keep) echo 'KEEP existing SSH policy' ;;
     enable)
         if [[ ${RPI_PROFILE_CONFIG_MANAGED:-0} != 1 ]]; then
-            apt-get update
-            apt-get install -y openssh-server
+            apt-get -o Dpkg::Use-Pty=0 -o Dpkg::Progress-Fancy=0 update
+            apt-get -o Dpkg::Use-Pty=0 -o Dpkg::Progress-Fancy=0 install -y openssh-server
         fi
         systemctl enable --now ssh
         ;;

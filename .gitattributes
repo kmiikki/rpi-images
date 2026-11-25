@@ -1,0 +1,4 @@
+# Keep production catalogs out of Git release archives at any depth.
+rpi-share.json export-ignore
+rpi-share.home.json export-ignore
+rpi-share.aalto.json export-ignore

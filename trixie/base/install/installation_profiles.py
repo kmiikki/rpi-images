@@ -13,7 +13,7 @@ COMPONENTS=('system','conda','lab314','spyder','hardware','wolfram','share','ima
 DEFAULTS=dict(primary_user=None,additional_users=None,hostname=None,ssh=None,
               ntp_servers=None,lab_prefix='/opt/lab314',ide_prefix=None,
               components={name:None for name in COMPONENTS},
-              share=dict(source='later',path=None,users=[],prefix=None,default_group=None),
+              share=dict(source='auto',path=None,users=[],prefix=None,default_group=None),
               imaging=dict(source=None,apps=[]))
 
 
@@ -91,14 +91,14 @@ def validate(data):
     protected=[Path(p) for p in ('/opt/conda','/opt/rpi','/opt/sci')]
     if any(a.is_relative_to(b) or b.is_relative_to(a) for a in prefixes for b in protected) or (len(prefixes)>1 and (prefixes[0].is_relative_to(prefixes[1]) or prefixes[1].is_relative_to(prefixes[0]))):raise ValueError('overlapping environment prefixes')
     share=s['share'];keys(share,DEFAULTS['share'],'share')
-    if share['source'] not in ('later','json','csv','example'):raise ValueError('invalid share source')
+    if share['source'] not in ('auto','later','json','csv','example'):raise ValueError('invalid share source')
     absolute(share['path'],'share.path',True)
     if (share['source'] in ('json','csv'))!=(share['path'] is not None):raise ValueError('share path required only for JSON/CSV source')
     strings(share['users'],'share.users',username);absolute(share['prefix'],'share.prefix',True)
     text(share['default_group'],'share.default_group',True)
-    if share['default_group'] and share['source']=='later':raise ValueError('default group requires a share catalog')
+    if share['default_group'] and share['source'] in ('auto','later'):raise ValueError('default group requires an explicit share catalog')
     selected_share=c['share'] if c['share'] is not None else data['base']!='GENERAL'
-    if share['source']!='later' and not selected_share:raise ValueError('catalog requires rpi-share')
+    if share['source'] not in ('auto','later') and not selected_share:raise ValueError('catalog requires rpi-share')
     imaging=s['imaging'];keys(imaging,DEFAULTS['imaging'],'imaging')
     absolute(imaging['source'],'imaging.source',True);strings(imaging['apps'],'imaging.apps')
     return data
@@ -144,7 +144,7 @@ def arguments(data):
         if value is not None:argv.append('--'+('' if value else 'no-')+name)
     share=s['share'];source=share['source']
     if source in ('json','csv'):option('share-'+source,share['path'])
-    else:argv.append('--share-'+source)
+    elif source!='auto':argv.append('--share-'+source)
     for user in share['users']:option('share-user',user)
     for key in ('prefix','default_group'):
         if share[key] is not None:option('share-prefix' if key=='prefix' else 'default-group',share[key])

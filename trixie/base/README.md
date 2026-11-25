@@ -220,8 +220,9 @@ base/
 │   ├── envrun
 │   └── rpi-share
 ├── config/
-│   ├── rpi-share.aalto.json
-│   └── rpi-share.home.json
+│   ├── rpi-share.example.csv
+│   ├── rpi-share.example.json
+│   └── rpi-share.schema.json
 ├── docs/
 │   ├── envrun.md
 │   ├── opencv-qt-font-fix.md
@@ -430,6 +431,11 @@ Behaviour:
 - retry loop continues until safe
 
 ### Configuration
+
+The installer discovers private JSON catalogs by profile. See
+[Share configuration and ownership](docs/unified-setup.md#share-configuration-and-ownership).
+
+When running the client, the configuration is named:
 
 ```text
 rpi-share.json

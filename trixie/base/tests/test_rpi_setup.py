@@ -417,6 +417,140 @@ class AccountTests(unittest.TestCase):
         run.assert_called_once_with(['userdel','--','chem'])
 
 
+class ShareDiscoveryTests(unittest.TestCase):
+    def setUp(self):
+        temporary = self.enterContext(tempfile.TemporaryDirectory())
+        self.root = Path(temporary).resolve()
+        self.invocation = self.root/'invocation'
+        self.package = self.root/'rpi-images-extracted'
+        self.base = self.package/'trixie/base'
+        self.installer = self.base/'install'
+        self.example = self.base/'config/rpi-share.example.json'
+        for directory in (self.invocation, self.installer, self.example.parent):
+            directory.mkdir(parents=True)
+        self.example.write_bytes((BASE/'config'/self.example.name).read_bytes())
+        self.enterContext(contextlib.chdir(self.invocation))
+        self.enterContext(patch.multiple(m, HERE=self.installer, BASE=self.base))
+        self.host = FakeHost()
+
+    def local_catalog(self, directory, name, label='production-fixture'):
+        data = json.loads(self.example.read_text())
+        data['site_notes'] = {'description': label}
+        path = directory/name
+        path.write_text(json.dumps(data))
+        return path
+
+    def plan(self, profile, *argv):
+        args = m.parser().parse_args(['--profile', profile, '--plan', *argv])
+        return m.resolve(args, self.host.snapshot(), self.host)
+
+    def test_each_profile_selects_only_its_own_catalog_with_all_three_present(self):
+        files = {profile: self.local_catalog(self.invocation, name, profile) for profile, name in
+                 (('GENERAL','rpi-share.json'), ('HOME','rpi-share.home.json'), ('AALTO','rpi-share.aalto.json'))}
+        for profile, path in files.items():
+            with self.subTest(profile=profile):
+                plan = self.plan(profile)
+                self.assertTrue(plan['components']['share'])
+                self.assertEqual(plan['config_path'], path)
+                self.assertEqual(plan['config']['site_notes']['description'], profile)
+                self.assertIn('external production JSON', plan['config_source'])
+
+    def test_searches_invocation_installer_package_and_adjacent_directories(self):
+        for directory in (self.invocation, self.installer, self.package, self.root):
+            with self.subTest(directory=directory):
+                path = self.local_catalog(directory, 'rpi-share.home.json')
+                try:
+                    self.assertEqual(self.plan('HOME')['config_path'], path)
+                finally:
+                    path.unlink()
+
+    def test_no_other_profile_or_bundled_example_is_used_as_fallback(self):
+        self.local_catalog(self.invocation, 'rpi-share.json')
+        aalto = self.local_catalog(self.installer, 'rpi-share.aalto.json')
+        (self.installer/'rpi-share.home.json').symlink_to(aalto)
+        (self.invocation/'rpi-share.home.json').symlink_to(self.example)
+        self.assertIsNone(self.plan('HOME')['config'])
+        self.assertEqual(self.plan('AALTO')['config_path'], aalto)
+        public = self.plan('HOME', '--share-example')
+        self.assertEqual(public['config_path'], self.example)
+        self.assertIn('bundled public example', public['config_source'])
+
+    def test_explicit_json_has_priority_and_path_is_absolute(self):
+        (self.invocation/'rpi-share.home.json').write_text('invalid catalog')
+        path = self.local_catalog(self.invocation, 'custom catalog.json')
+        plan = self.plan('HOME', '--share-json', path.name)
+        self.assertEqual(plan['config_path'], path)
+        self.assertIsNone(self.plan('HOME', '--share-later')['config'])
+        self.assertFalse(self.plan('GENERAL', '--no-share')['components']['share'])
+
+    def test_multiple_matches_require_selection_and_print_absolute_paths(self):
+        first = self.local_catalog(self.invocation, 'rpi-share.home.json', 'first')
+        second = self.local_catalog(self.root, 'rpi-share.home.json', 'second')
+        (self.installer/first.name).symlink_to(first)
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output), patch.object(sys.stdin, 'isatty', return_value=False):
+            self.assertEqual(m.main(['--profile','HOME','--plan'], self.host), 0)
+            with patch.object(m, 'apply') as apply, self.assertRaisesRegex(ValueError, 'Multiple matching'):
+                m.main(['--profile','HOME','--yes'], self.host)
+            apply.assert_not_called()
+        self.assertIn(str(first), output.getvalue())
+        self.assertIn(str(second), output.getvalue())
+        self.assertEqual(self.plan('HOME')['share_candidates'], (first, second))
+        output = io.StringIO()
+        def answer(prompt, default):
+            if prompt.startswith('Share configuration'):
+                return '2'
+            self.assertIn(f'external production JSON: {second}', output.getvalue())
+            return 'y'
+        with contextlib.redirect_stdout(output), patch.object(sys.stdin, 'isatty', return_value=True), \
+                patch.object(m, 'ask', side_effect=answer), patch.object(m, 'apply', return_value=0) as apply:
+            self.assertEqual(m.main(['--profile','HOME'], self.host), 0)
+        self.assertEqual(apply.call_args.args[1]['config_path'], second)
+
+    def test_no_match_offers_generic_template_manual_path_and_deferral(self):
+        manual = self.local_catalog(self.root, 'manual.json')
+        for choices, selected in ((['share','template','manual','y'], manual), (['share','later','y'], None)):
+            with self.subTest(selected=selected):
+                output = io.StringIO()
+                with contextlib.redirect_stdout(output), patch.object(sys.stdin, 'isatty', return_value=True), \
+                        patch('builtins.input', return_value=str(manual)), patch.object(m, 'ask', side_effect=choices), \
+                        patch.object(m, 'apply', return_value=0) as apply:
+                    self.assertEqual(m.main(['--profile','AALTO'], self.host), 0)
+                self.assertIn('No matching AALTO catalog', output.getvalue())
+                self.assertEqual(apply.call_args.args[1].get('config_path'), selected)
+                if selected:
+                    self.assertIn(f'Generic public template: {self.example}', output.getvalue())
+
+    def test_invalid_catalog_prevents_hardware_and_software_changes(self):
+        path = self.invocation/'rpi-share.home.json'
+        path.write_text('{"version": 2}')
+        with contextlib.redirect_stdout(io.StringIO()), patch.object(m, 'apply') as apply, \
+                patch.object(self.host, 'run_preboot', wraps=self.host.run_preboot) as preboot, \
+                self.assertRaisesRegex(ValueError, 'Cannot read or validate Share catalog'):
+            m.main(['--profile','HOME','--yes'], self.host)
+        apply.assert_not_called()
+        preboot.assert_called_once_with(preview=True, layout=None, firmware=True)
+        self.assertEqual(path.read_text(), '{"version": 2}')
+
+    def test_selected_path_survives_a_reboot_and_is_reviewed_on_reconciliation(self):
+        path = self.local_catalog(self.invocation, 'rpi-share.json')
+        args = m.parser().parse_args(['--profile','GENERAL','--yes'])
+        store = SimpleNamespace(data={}, save=lambda: None)
+        initial = m.resolve(args, self.host.snapshot(), self.host)
+        m.lifecycle.save_selection(store, args, initial, self.host.snapshot())
+        self.assertEqual(store.data['pending_share']['path'], str(path))
+        self.assertNotIn('production-fixture', json.dumps(store.data))
+        self.host.records = store
+        output = io.StringIO()
+        with contextlib.chdir(self.package), contextlib.redirect_stdout(output), \
+                patch.object(sys.stdin, 'isatty', return_value=True), patch.object(m, 'ask', return_value='n') as prompt, \
+                patch.object(m, 'apply') as apply:
+            self.assertEqual(m.main([], self.host), 0)
+        self.assertIn(str(path), output.getvalue())
+        prompt.assert_called_once()
+        apply.assert_not_called()
+
+
 class ConfigurationOwnershipTests(unittest.TestCase):
     def test_user_home_not_root_home_and_no_unapproved_overwrite(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -427,8 +561,32 @@ class ConfigurationOwnershipTests(unittest.TestCase):
             path=home/'.config/rpi-share.json';self.assertEqual(path.stat().st_mode & 0o777,0o600)
             chown.assert_any_call(path,1000,1000)
             changed=dict(config={'version':2},owners=['alice'])
-            with patch.object(accounts,'local_accounts',return_value=local),self.assertRaises(ValueError):m.install_config(changed)
+            with patch.object(accounts,'local_accounts',return_value=local):
+                self.assertIn('KEPT existing', m.install_config(changed))
             self.assertEqual(json.loads(path.read_text()),{'version':1})
+
+    def test_preserves_original_source_and_existing_users_until_explicit_replacement(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            local = {}
+            for user in ('alice', 'bob', 'carol'):
+                home = root/user
+                (home/'.config').mkdir(parents=True)
+                local[user] = dict(uid=os.getuid(), gid=os.getgid(), home=str(home))
+            source, existing, new = (root/user/'.config/rpi-share.json' for user in local)
+            source.write_text('{"original": true}\n')
+            existing.write_text('legacy invalid catalog')
+            plan = dict(config={'version': 2}, owners=list(local), config_path=source)
+            with patch.object(accounts, 'local_accounts', return_value=local), patch.object(os, 'chown'):
+                result = m.install_config(plan)
+                self.assertIn(f'KEPT existing {existing}', result)
+                self.assertIn(f'CONFIGURED {new}', result)
+                self.assertEqual(existing.read_text(), 'legacy invalid catalog')
+                self.assertEqual(json.loads(new.read_text()), plan['config'])
+                result = m.install_config(plan, replace=True)
+                self.assertIn(f'REPLACED {existing}', result)
+            self.assertEqual(json.loads(existing.read_text()), plan['config'])
+            self.assertEqual(source.read_text(), '{"original": true}\n')
 
     def test_configuration_symlink_refused(self):
         with tempfile.TemporaryDirectory() as tmp:

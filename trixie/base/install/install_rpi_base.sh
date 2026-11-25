@@ -23,7 +23,7 @@ install_apt_list() {
     if [[ ${INSTALL_APT_SPYDER:-1} == 0 ]]; then
         mapfile -t pkgs < <(printf '%s\n' "${pkgs[@]}" | grep -vEx 'spyder|python3-spyder-kernels')
     fi
-    [[ ${#pkgs[@]} -gt 0 ]] && apt-get install -y "${pkgs[@]}"
+    [[ ${#pkgs[@]} -gt 0 ]] && apt-get -o Dpkg::Use-Pty=0 -o Dpkg::Progress-Fancy=0 install -y "${pkgs[@]}"
 }
 
 setup_lab_dirs_and_path() {
@@ -46,9 +46,9 @@ setup_passwordless_sudo_for_invoking_user() {
 main() {
     need_root
     check_rpi_os
-    apt-get update
+    apt-get -o Dpkg::Use-Pty=0 -o Dpkg::Progress-Fancy=0 update
     if [[ "$DO_APT_UPGRADE" -eq 1 ]]; then
-        apt-get full-upgrade -y
+        apt-get -o Dpkg::Use-Pty=0 -o Dpkg::Progress-Fancy=0 full-upgrade -y
     fi
     install_apt_list "${PKG_DIR}/common-apt.txt"
     install_apt_list "${PKG_DIR}/rpi-apt.txt"

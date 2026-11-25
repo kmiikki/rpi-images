@@ -22,7 +22,8 @@ directory name as needed. Git metadata is optional.
 
 ## First-boot preparation on Raspberry Pi 5
 
-On Raspberry Pi 4 and 5 Model B, the first question is your keyboard layout.
+On Raspberry Pi 4 and 5 Model B, setup offers keyboard layout selection after
+you approve the profile's installation plan.
 The numbered menu starts with Finnish, Swedish, German, US and UK layouts.
 Select **Show all available keyboard layouts** for the installed XKB registry.
 Search by code or name, move between pages, select a displayed number or choose
@@ -65,6 +66,12 @@ this environment fails to display that content with the Pi 5's default 16 KiB
 pages. When Spyder is selected, setup offers the Raspberry Pi OS stock ARM64
 4 KiB kernel. This also applies to existing installations on their next normal
 rerun. The switch has its own approval prompt.
+
+On the target, the plan reports whether verification is pending, a boot edit
+needs approval, a reboot is due, or the compatible kernel is ready. A ready
+result checks the running release and page size against the stock image, modules
+and initramfs. Unexpected firmware settings or a mismatch after a recorded
+reboot are reported for review.
 
 The kernel switch addresses the original page-size issue. On the clean tr3
 Trixie installation, Spyder's formatted Help displayed documentation and ran
@@ -167,6 +174,31 @@ rpi-keyboard --current
 rpi-keyboard us
 rpi-keyboard fi
 ```
+
+The keyboard layout controls key mapping. The interface language comes from
+the language settings, and individual locale categories control regional
+formatting. Over SSH, an unavailable forwarded category such as `LC_TIME`
+falls back to the target's usable settings for installer commands. Check
+`locale -a` on the Pi for the generated locales. When applying a keyboard
+change as root, the utility can generate a missing requested locale already
+enabled in `/etc/locale.gen` with `locale-gen --keep-existing`. To select a new
+regional preference deliberately, use `sudo dpkg-reconfigure locales` and
+choose the desired default interface language separately.
+
+### WLAN country and Ethernet
+
+GENERAL, HOME and AALTO show the WLAN country in the installation plan.
+Interactive setup accepts a two-letter ISO country code. Setup prefers the
+country configured for boot, then the current valid global domain. On an
+unconfigured target it offers Finland (`FI`). For example, use
+`--wlan-country DE` for a Pi operated in Germany. A stale plan stops if a
+different valid country has appeared since inspection.
+
+On Trixie, setup delegates country changes to `raspi-config`, uses WLAN-only
+rfkill operations and enables the NetworkManager Wi-Fi radio. The connection
+profiles stay in NetworkManager. Association and a wireless password are
+optional. Before a planned installation reboot, setup applies the approved
+country so the resumed installation can check the boot setting and live radio.
 
 ### Hardware acceptance
 
@@ -408,15 +440,37 @@ acceptance result. See [Wolfram licensing and component details](wolfram.md).
 
 ## Share configuration and ownership
 
-Choose an existing JSON, a local CSV, an explicitly selected public example, or
-configuration later. HOME/AALTO always install the client but do not silently
-activate a generic or legacy site inventory.
+Before starting setup, place your private JSON catalog in the directory you run
+setup from, beside `setup-rpi.sh`, or in the directory containing the extracted
+package. The top-level package directory itself is also searched.
+
+| Profile | Production filename |
+|---|---|
+| GENERAL | `rpi-share.json` |
+| HOME | `rpi-share.home.json` |
+| AALTO | `rpi-share.aalto.json` |
+
+You can keep all three files in one directory. Setup proposes only the filename
+for the selected profile. A matching GENERAL catalog enables the optional
+rpi-share component unless you pass `--no-share`. HOME and AALTO always
+include the client. If several matching catalogs are found, setup lists their
+absolute paths and asks you to choose. For unattended installation with several
+matches, pass `--share-json PATH` or `--share-later`.
+
+The plan displays the absolute path of the validated catalog for approval.
+An explicit `--share-json PATH` overrides discovery and the profile file's
+source choice. When no match is available, choose **share** in the approval
+prompt to select a JSON, import a CSV, or see the path to the generic public
+template. Copy the template to a private location, edit it for your site, and
+select the resulting file. Approving a plan with no catalog defers
+configuration. For GENERAL without a matching catalog, select rpi-share in
+**customize** or pass `--share` to see these options.
 
 ```sh
 sudo bash setup-rpi.sh --profile HOME --share-json /etc/rpi-share/site.json
 sudo bash setup-rpi.sh --profile AALTO --school CHEM \
   --share-csv /etc/rpi-share/shares.csv --default-group staff
-sudo bash setup-rpi.sh --profile GENERAL --share --share-example
+sudo bash setup-rpi.sh --profile GENERAL --share --share-later
 ```
 
 The client keeps the existing `/opt/lab` software prefix when an installed
@@ -426,13 +480,17 @@ The client keeps the existing `/opt/lab` software prefix when an installed
 Configuration is written as `~/.config/rpi-share.json` for the selected primary
 account, using that local account's actual home and ownership, not root's home.
 Use repeated `--share-user USER` to configure an explicit set of existing/planned
-accounts. Files are mode 0600. A different existing configuration is preserved
-unless `--replace-share-config` explicitly authorizes replacement. Software-only
-updates never overwrite catalogs. Symlinked configuration destinations are refused.
+accounts. New files are mode 0600. Existing configurations are kept unless
+`--replace-share-config` explicitly authorizes replacement. Setup always
+preserves the selected source itself. Software-only updates never overwrite
+catalogs. Symlinked configuration destinations are refused. If installation
+pauses for a reboot, keep the selected source available at the same path.
+Repeat `--replace-share-config` on resumption if you still want replacement.
 
-The original public HOME/AALTO JSON files remain available unchanged. The new
-public `rpi-share.example.json`/`.csv` are generic examples using reserved example
-hosts. Real site inventories can remain entirely outside Git.
+Keep production catalogs outside public Git repositories. The repository
+ignores the three production filenames and excludes them from Git source
+archives. Build releases from the tracked source tree. The public
+`rpi-share.example.json` and `rpi-share.example.csv` use reserved example hosts.
 
 See [the reversible CSV/JSON format](rpi-share-catalog.md) for Calc editing,
 hierarchy, groups, full-tree navigation and the authentication/ACL boundaries.
@@ -516,6 +574,29 @@ settings and preserves the file for review if a managed binding or marker has
 changed. Setup skips other keyboard layouts and other selected terminals.
 
 ### Repair and update
+
+For an existing Pi, preview and apply just the WLAN repair with the corrected
+checkout. The commands work over Ethernet SSH. Add `--wlan-country XX` to
+the repair to choose the country where the Pi operates.
+
+```sh
+sudo bash setup-rpi.sh --manage --action repair --component wlan --plan
+sudo bash setup-rpi.sh --manage --action repair --component wlan
+sudo bash setup-rpi.sh --manage --action verify --component wlan
+```
+
+Run the verify command again after the next normal reboot to check persistence.
+It compares the boot setting, the global section of `iw reg get`, WLAN rfkill
+and NetworkManager's radio setting. The driver can report a separate PHY
+country such as `99`. A missing or hardware-blocked adapter produces a deferred
+result. For a failed check inspect `rfkill list wlan`, `iw reg get`,
+`nmcli radio` and the `cfg80211.ieee80211_regdom` token in
+`/boot/firmware/cmdline.txt`.
+
+If package output is indented or overwritten in a terminal, check the command
+in the installation log and inspect `stty -a` in that terminal. Logged APT
+transactions use line-oriented dpkg output. The combined stream and exit
+status are recorded under `/var/lib/rpi-images/logs`.
 
 For later full OS upgrades, preview the cached APT plan and then refresh and
 approve the current plan:
@@ -631,17 +712,29 @@ deferred components and failures. It reuses current environment verification.
 Hardware and GUI checks, remote login, directory existence and filesystem ACLs
 require separate authorized acceptance on the target machine.
 
-Run only the new isolated tests from the repository root:
+Run the complete regression suite from the repository root. On Niobium,
+confirm that `/tmp` is the RAM-backed mount and check its available capacity
+before starting. The subshell removes its own temporary directory on exit or
+interruption.
 
 ```sh
-PYTHONDONTWRITEBYTECODE=1 python3 -B -m unittest discover \
-  -s trixie/base/tests -p 'test_rpi_*.py' -v
+(
+  set -eu
+  test "$(findmnt -no FSTYPE -T /tmp)" = tmpfs
+  df -h /tmp
+  TMPDIR=$(mktemp -d /tmp/rpi-regression.XXXXXXXX)
+  export TMPDIR PYTHONDONTWRITEBYTECODE=1
+  trap 'rm -rf -- "$TMPDIR"' EXIT
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
+  python3 -B -m unittest discover -s trixie/base/tests -v
+)
 ```
 
-These tests use temporary fixtures and mocked provisioning/connections. Optional
-LibreOffice tests use a separate temporary profile and real local CSV→ODS→CSV
-conversions. No real accounts, mounts, Aalto/Home connections or `/opt` changes
-are used by the automated tests.
+The suite uses temporary fixtures, real terminal pairs and mocked provisioning.
+The optional LibreOffice checks use an isolated profile for CSV→ODS→CSV
+round trips. [Clean HOME results and physical retests on tr2](tr2-home-acceptance.md)
+
 ## Update an installed system
 
 The maintenance menu has **Update All installed components**. Preview the same

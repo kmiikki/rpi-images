@@ -18,8 +18,8 @@ echo "Target environment: $ENV_PREFIX"
 echo
 if [[ ${RPI_HARDWARE_APT_READY:-0} != 1 ]]; then
     echo "Installing required Raspberry Pi system Python packages..."
-    sudo apt-get update
-    sudo apt-get install -y \
+    sudo apt-get -o Dpkg::Use-Pty=0 -o Dpkg::Progress-Fancy=0 update
+    sudo apt-get -o Dpkg::Use-Pty=0 -o Dpkg::Progress-Fancy=0 install -y \
         python3-opencv \
         python3-picamera2 \
         python3-libcamera \

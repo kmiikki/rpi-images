@@ -2,6 +2,7 @@
 """List, inspect, or select an installed XKB keyboard layout on Raspberry Pi OS."""
 
 import argparse
+import locale
 import os
 from pathlib import Path
 import pwd
@@ -164,6 +165,58 @@ def active_labwc():
     return False
 
 
+LOCALE_GEN = Path('/etc/locale.gen')
+LOCALE_KEYS = {'LANG', 'LC_ALL', 'LC_CTYPE', 'LC_COLLATE', 'LC_MESSAGES', 'LC_MONETARY',
+               'LC_NUMERIC', 'LC_TIME', 'LC_PAPER', 'LC_NAME', 'LC_ADDRESS', 'LC_TELEPHONE',
+               'LC_MEASUREMENT', 'LC_IDENTIFICATION'}
+
+
+def locale_alias_available(name):
+    # libc also accepts aliases and encoding spellings omitted by locale -a.
+    previous = locale.setlocale(locale.LC_CTYPE)
+    try:
+        locale.setlocale(locale.LC_CTYPE, name)
+        return True
+    except locale.Error:
+        return False
+    finally:
+        locale.setlocale(locale.LC_CTYPE, previous)
+
+
+def locale_environment(environ, *, generate=False):
+    """Honor installed regional settings and generate only host-selected locales."""
+    env = dict(environ)
+    clean = dict(env, LC_ALL='C')
+
+    def normalized(value):
+        return value.lower().replace('utf-8', 'utf8')
+
+    def inventory():
+        listing = subprocess.check_output(['/usr/bin/locale', '-a'], env=clean, text=True)
+        return {normalized(value) for value in listing.splitlines()}
+
+    installed = inventory()
+    requested = {key: value for key, value in env.items()
+                 if key in LOCALE_KEYS and value}
+    for value in set(requested.values()):
+        if normalized(value) not in installed and locale_alias_available(value):
+            installed.add(normalized(value))
+    missing = {normalized(value) for value in requested.values()} - installed
+    if missing and generate and os.geteuid() == 0 and LOCALE_GEN.is_file():
+        enabled = {normalized(fields[0]) for line in LOCALE_GEN.read_text().splitlines()
+                   if (fields := line.partition('#')[0].split())}
+        if missing & enabled:
+            subprocess.run(['/usr/sbin/locale-gen', '--keep-existing'], check=True, env=clean)
+            installed.update(inventory())
+    for key, value in requested.items():
+        if normalized(value) not in installed:
+            print(f'{key}={value!r} unavailable on this host; using the local fallback for setup.', file=sys.stderr)
+            del env[key]
+    if not env.get('LANG'):
+        env['LANG'] = 'C.UTF-8' if 'c.utf8' in installed else 'C'
+    return env
+
+
 def select(layout):
     if not layout_pending(layout):
         print(f'Keyboard layout {layout} is already stored. Active session layout is unconfirmed.')
@@ -175,7 +228,7 @@ def select(layout):
             raise ValueError('Changing the layout requires sudo or a root invocation.')
         command.insert(0, str(SUDO))
     try:
-        subprocess.run(command, stdin=subprocess.DEVNULL, check=True)
+        subprocess.run(command, stdin=subprocess.DEVNULL, check=True, env=locale_environment(os.environ, generate=True))
     except subprocess.CalledProcessError as exc:
         raise ValueError(f'Non-interactive raspi-config keyboard command failed (exit {exc.returncode}).') from exc
     if layout_pending(layout):

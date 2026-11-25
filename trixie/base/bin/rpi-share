@@ -21,6 +21,7 @@ LIST_ALL=0
 DEBUG=0
 ADMIN_MODE=0
 ADMIN_ACCOUNT_CONFIRMED=0
+MAPPING_CONFIRMED=0
 TREE_ONLY=0
 TREE_FULL=0
 NAV_GROUPS=()
@@ -50,7 +51,7 @@ Usage:
   $PROGRAM --check
 
 Options:
-  -g, --gateway NAME     Gateway name from JSON, e.g. viila, kosh, nasse
+  -g, --gateway NAME     Gateway name from the selected catalog
   -s, --share NAME       Share name from JSON, e.g. teamwork-t100, work-t100, root, code
   -u, --user USER        Remote username for sshfs/cifs
   --cleanup              Unmount all known rpi-share mappings and exit
@@ -733,6 +734,7 @@ interactive_select() {
     if [[ "$answer" =~ ^[Yy]$ ]]; then
         GATEWAY="$default_gw"
         SHARE="$default_sh"
+        MAPPING_CONFIRMED=1
         return
     fi
 
@@ -760,15 +762,14 @@ interactive_select() {
 
 open_path_or_url() {
     local target="$1"
+    [[ -n ${DISPLAY:-}${WAYLAND_DISPLAY:-} ]] || die "No graphical session. Open manually: $target"
 
     if command -v nemo >/dev/null 2>&1; then
-        nemo "$target" >/dev/null 2>&1 &
+        nemo "$target" || die "File manager launch failed: $target"
     elif command -v xdg-open >/dev/null 2>&1; then
-        xdg-open "$target" >/dev/null 2>&1 &
+        xdg-open "$target" || die "Graphical opener failed: $target"
     else
-        echo "No supported file manager opener found."
-        echo "Open manually:"
-        echo "  $target"
+        die "No supported file manager opener. Open manually: $target"
     fi
 }
 
@@ -923,7 +924,7 @@ mount_mapping() {
     TARGET_MP="$(mountpoint_for "$gw" "$sh")"
     mount_type="$(mount_type_for "$sh")"
 
-    print_mapping "$gw" "$sh"
+    if [[ $MAPPING_CONFIRMED != 1 ]]; then print_mapping "$gw" "$sh"; fi
 
     if [[ "$mount_type" == "browse" ]]; then
         mount_browse "$gw" "$sh"

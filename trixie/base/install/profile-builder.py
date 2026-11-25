@@ -17,7 +17,8 @@ def preview(data,host=None):
     a=setup.parser().parse_args(profiles.arguments(data)+['--plan','--recovery','create'])
     state=host.snapshot();plan=setup.resolve(a,state,host)
     print('PREVIEW ONLY; missing accounts are shown as planned creations, not authorized.')
-    print(json.dumps(plan,indent=2,ensure_ascii=False,default=str))
+    print(json.dumps({key: value for key, value in plan.items() if key != 'config'},
+                     indent=2,ensure_ascii=False,default=str))
     print('Primary administrator: existing approved NOPASSWD: ALL policy.')
     print('Additional accounts: sudo group; no new per-user NOPASSWD rule.')
     for name,detail in setup.stages(a,plan):print(name+': '+detail)

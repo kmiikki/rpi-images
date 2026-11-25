@@ -8,6 +8,8 @@ import re
 import shlex
 import subprocess
 import tempfile
+import sys
+import termios
 
 from installation_state import secure_directory
 
@@ -55,6 +57,8 @@ class Log:
 
     def run(self, command, env, capture=False, **kwargs):
         command = [str(item) for item in command]
+        if Path(command[0]).name in ('apt','apt-get'):
+            command[1:1] = ['-o','Dpkg::Use-Pty=0','-o','Dpkg::Progress-Fancy=0']
         safe = [redact(item) for item in command]
         self.note(f'[{self.stage}] $ {shlex.join(safe)}')
         tail = deque(maxlen=28)
@@ -69,6 +73,7 @@ class Log:
                 except OSError as error:
                     log_error=error
 
+        tty = termios.tcgetattr(0) if os.isatty(0) else None
         try:
             with subprocess.Popen(command, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                                   text=True, errors='replace', **kwargs) as proc:
@@ -81,16 +86,29 @@ class Log:
                         if capture:
                             captured.append(clean+'\n')
                         else:
-                            print(clean,flush=True)
+                            end='\n'
+                            if sys.stdout.isatty():
+                                flags=termios.tcgetattr(sys.stdout.fileno())[1]
+                                if not (flags & termios.OPOST and flags & termios.ONLCR):
+                                    end='\r\n'
+                            print(clean,end=end,flush=True)
+                    code=proc.wait()
                 except BaseException:
                     if proc.poll() is None:
                         proc.terminate()
+                        try:
+                            proc.wait(timeout=3)
+                        except subprocess.TimeoutExpired:
+                            proc.kill()
+                    record(f'[{self.stage}] interrupted while forwarding output')
                     raise
-                code=proc.wait()
         except OSError as error:
             code=1
             tail.append(redact(error))
             record(f'Unable to run command: {error}')
+        finally:
+            if tty is not None:
+                termios.tcsetattr(0,termios.TCSANOW,tty)
         record(f'[{self.stage}] exit {code}')
         if log_error is None:
             try:

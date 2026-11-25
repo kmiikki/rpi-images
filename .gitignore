@@ -1,6 +1,11 @@
 __pycache__/
 *.py[cod]
 
+# Private production rpi-share catalogs, in any directory.
+rpi-share.json
+rpi-share.home.json
+rpi-share.aalto.json
+
 # Optional administrator-maintained inventories belong outside the public tree.
 /trixie/base/config/local/
 

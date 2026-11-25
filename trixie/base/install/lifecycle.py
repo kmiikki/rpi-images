@@ -16,6 +16,7 @@ import tempfile
 from installation_state import ABSENT, UNKNOWN, Store, now
 import os_upgrade
 from os_upgrade import boot_id
+import wlan
 import preboot
 
 HERE = Path(__file__).resolve().parent
@@ -418,8 +419,8 @@ def terminal_restoration(store,host):
 def share_definitions(prefix):
     binaries=[(BASE/'bin'/name,str(prefix/'bin'/name),mode)
               for name,mode in (('rpi-share','755'),('rpi-share-builder.py','755'),('rpi_share_catalog.py','644'))]
-    examples=[(path,str(prefix/'share/rpi-share/examples'/path.name),'644')
-              for path in (*sorted(BASE.glob('config/rpi-share.example.*')),BASE/'config/rpi-share.schema.json')]
+    examples=[(BASE/'config'/name,str(prefix/'share/rpi-share/examples'/name),'644')
+              for name in ('rpi-share.example.csv','rpi-share.example.json','rpi-share.schema.json')]
     return binaries+examples
 
 
@@ -439,6 +440,13 @@ def save_selection(store, a, plan, state):
                       share_prefix=str(plan['share_prefix']), ntp=plan['ntp'], ssh_policy=plan['ssh'], primary=plan['primary'],
                       additional=plan['additional'], share_owners=plan['owners'],
                       accounts={user: user in state['accounts'] for user in [plan['primary'],*plan['additional']]})
+    if plan.get('wlan_country'):
+        store.data['pending_wlan'] = dict(country=plan['wlan_country'],previous=plan['previous_wlan_country'])
+    if plan.get('config_path'):
+        store.data['pending_share'] = dict(path=str(plan['config_path']), kind=plan['config_kind'],
+                                           default_group=a.default_group)
+    else:
+        store.data.pop('pending_share',None)
     store.save()
 
 
@@ -617,6 +625,18 @@ def verify(store, host, component=None):
         'wolfram':['dpkg-query','-W','wolfram-engine'],
     }
     failed=False
+    wlan_country=data.get('pending_wlan',{}).get('country') or data.get('wlan_country')
+    if component=='wlan' or (not component and wlan_country):
+        try:
+            state=wlan.read_state(host)
+            detail=wlan.verify(state,wlan_country or wlan.existing_country(state) or 'FI',data)
+            print(detail)
+            failed=detail.startswith('DEFERRED')
+        except (ValueError,OSError) as exc:
+            print('FAIL WLAN:',exc)
+            failed=True
+        if component=='wlan':
+            return int(failed)
     with inspection(host):
         for name,command in commands.items():
             if component and name!=component:
@@ -1144,7 +1164,7 @@ def approved_targets(store, paths, component):
     return targets
 
 
-def software_action(store,host,verb,component,packages,preview,approved_plan=None):
+def software_action(store,host,verb,component,packages,preview,approved_plan=None,*,wlan_country=None):
     data=store.data or {}
     if not preview and not data:
         raise ValueError(UNKNOWN)
@@ -1152,6 +1172,25 @@ def software_action(store,host,verb,component,packages,preview,approved_plan=Non
         raise ValueError('Package names apply to Scientific Python, Spyder or hardware Python.')
     if any(not PACKAGE.fullmatch(package) for package in packages):
         raise ValueError('Use an installed package name without shell or version expressions.')
+    if component=='wlan':
+        if verb!='repair':
+            raise ValueError('Use repair or verify for WLAN')
+        if preview:
+            previous=wlan.existing_country(wlan.read_state(host))
+            pending=data.get('pending_wlan',{})
+            resumed=pending.get('country') if pending.get('previous')==previous else None
+            country=wlan_country or resumed or previous or 'FI'
+        else:
+            previous,country=approved_plan
+        detail=wlan.configure(host,country,expected=previous,data=store.data,preview=preview)
+        print(detail)
+        if not preview:
+            if detail.startswith('DEFERRED'):
+                store.data['pending_wlan']=dict(country=country,previous=previous)
+                store.data['operation']['status']='deferred'
+            else:
+                store.data.pop('pending_wlan',None)
+        return previous,country
     if component=='terminal-shortcuts' and verb=='repair':
         target=terminal_target(host.snapshot())
         layout=preboot.active_layout()
@@ -1419,9 +1458,9 @@ def require_root():
 
 
 def select_component(action):
-    choices=list(LABELS)
+    choices=list(LABELS) + (['wlan'] if action=='repair' else [])
     for i,key in enumerate(choices,1):
-        print(f'  {i}. {LABELS[key]}')
+        print(f'  {i}. {LABELS.get(key,"Wireless LAN")}')
     while True:
         value=input(f'Component to {action} (0 returns): ').strip()
         if value in ('','0'):
@@ -1435,7 +1474,8 @@ def main(argv,host,store=None):
     parser=argparse.ArgumentParser(description=__doc__,allow_abbrev=False)
     parser.add_argument('--manage', action='store_true', required=True)
     parser.add_argument('--action', choices=('status','verify','diagnose','repair','update','remove','reset','quarantine','os-upgrade'))
-    parser.add_argument('--component', choices=LABELS)
+    parser.add_argument('--component', choices=(*LABELS,'wlan'))
+    parser.add_argument('--wlan-country',type=str.upper,help='two-letter country for WLAN repair')
     parser.add_argument('--all', action='store_true', help='update the complete saved installation')
     parser.add_argument('--package', action='append', default=[])
     parser.add_argument('--plan','--dry-run', action='store_true')
@@ -1465,6 +1505,10 @@ def main(argv,host,store=None):
         component=select_component(action)
         if not component:
             return 0
+    if args.wlan_country and (component!='wlan' or action!='repair' or args.wlan_country not in wlan.countries()):
+        parser.error('--wlan-country requires WLAN repair and a valid two-letter country')
+    if component=='wlan' and action not in ('repair','verify'):
+        parser.error('WLAN supports repair and verify')
     if action=='repair' and component in ('lab314','hardware') and sys.stdin.isatty() and not args.package:
         prompt='Damaged package name (Enter to check the environment): '
         if package:=input(prompt).strip():
@@ -1525,7 +1569,8 @@ def main(argv,host,store=None):
             package_removal(store,host,component,args.package,False)
         return 0
     with inspection(host):
-        approved_plan=software_action(store,host,action,component,args.package,True)
+        options={'wlan_country':args.wlan_country} if args.wlan_country else {}
+        approved_plan=software_action(store,host,action,component,args.package,True,**options)
     if args.plan or not confirm(args):
         return 0
     with store.locked():
@@ -1544,7 +1589,8 @@ def main(argv,host,store=None):
             store.data['operation']['status']='failed'
             raise
         else:
-            store.data['operation']['status']='complete'
+            if store.data['operation']['status']=='running':
+                store.data['operation']['status']='complete'
         finally:
             store.save()
             host.log.close()

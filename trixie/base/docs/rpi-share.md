@@ -126,14 +126,21 @@ This is a local mount location, not a remote server path. For example:
 
 ## Aalto usage notes
 
-* `viila` → staff gateway (recommended for staff)
-* `kosh` → student + staff gateway
+* Use the gateway recommended for your role in your administrator's private AALTO catalog.
 * The same logical share may use different remote paths on different gateways
 * Use shared storage for research data (not personal home directories)
 
 ---
 
 ## Troubleshooting
+
+When a HOME catalog offers a default mapping, review the gateway, share,
+destination and authorization notes before confirming. A browse destination
+then prints its URL and invokes the file manager. In a plain SSH session,
+open the printed URL from a desktop session. If the graphical opener exits
+with an error, the command reports that failure. Confirm server connectivity
+and access in the file manager or by completing a mount and an authorized
+file operation.
 
 Check active mounts:
 

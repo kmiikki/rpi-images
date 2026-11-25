@@ -111,7 +111,7 @@ accounts. AALTO rejects that value because its maintenance account is required.
 | `ntp_servers` | Nonempty array of hostnames/IP addresses, or null for base servers |
 | `lab_prefix`, `ide_prefix` | Canonical absolute environment paths; null IDE uses existing APT fallback |
 | `components` | Boolean choices or null for each existing component's base default |
-| `share.source`, `share.path` | `later`, `example`, `json`, `csv`; absolute path required only for json/csv |
+| `share.source`, `share.path` | `auto` (discover by profile), `later` (defer), `example`, `json`, `csv`. Supply an absolute path for JSON or CSV. |
 | `share.users` | Local catalog owners; empty array defaults to primary account |
 | `share.prefix` | Absolute software prefix or null for existing location detection |
 | `share.default_group` | Catalog navigation group or null; requires a selected catalog |

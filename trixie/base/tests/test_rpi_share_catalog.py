@@ -9,6 +9,7 @@ from pathlib import Path
 import socket
 import subprocess
 import sys
+import tarfile
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -32,23 +33,34 @@ def equal_typed(test,a,b):
 def example():return c.loads((BASE/'config/rpi-share.example.json').read_text())
 
 
+def legacy_example(version=1):
+    return {
+        'version': version,
+        'defaults': {'gateway': 'lab', 'share': 'files'},
+        'gateways': {'lab': {'host': 'lab.example.invalid'}},
+        'shares': {
+            'files': {'name': 'Example files', 'mount_type': 'cifs', 'remote_path': '/Research',
+                      'cifs_options': 'iocharset=utf8,vers=3.0,noserverino'},
+            'maintenance': {'mount_type': 'sshfs', 'remote_path': '/srv/example', 'explicit_only': True},
+        },
+    }
+
+
 class RoundTripTests(unittest.TestCase):
-    def test_home_roundtrip_and_source_unchanged(self):
-        self.original('home',str)
-
-    def test_aalto_roundtrip_and_source_unchanged(self):
-        self.original('aalto',int)
-
-    def original(self,name,version_type):
-        source=BASE/('config/rpi-share.'+name+'.json');before=source.read_bytes()
-        original=c.validate(c.loads(before.decode()));self.assertIs(type(original['version']),version_type)
-        with tempfile.TemporaryDirectory() as tmp:
-            csv_path=Path(tmp)/(name+'.csv');json_path=Path(tmp)/(name+'.roundtrip.json')
-            c.atomic_write(csv_path,c.export_csv(original))
-            restored=c.validate(c.import_csv(csv_path.read_text()))
-            c.atomic_write(json_path,json.dumps(restored,ensure_ascii=False))
-            equal_typed(self,original,c.loads(json_path.read_text()))
-        self.assertEqual(before,source.read_bytes())
+    def test_legacy_roundtrip_preserves_version_type_and_source(self):
+        for version in (1, '1.0'):
+            with self.subTest(version=version), tempfile.TemporaryDirectory() as tmp:
+                source = Path(tmp)/'legacy.json'
+                before = json.dumps(legacy_example(version))
+                source.write_text(before)
+                config = c.validate(c.loads(source.read_text()))
+                csv_path = Path(tmp)/'catalog.csv'
+                c.atomic_write(csv_path, c.export_csv(config))
+                output = Path(tmp)/'roundtrip.json'
+                c.atomic_write(output, json.dumps(c.validate(c.import_csv(csv_path.read_text()))))
+                self.assertIs(type(c.loads(output.read_text())['version']), type(version))
+                equal_typed(self, config, c.loads(output.read_text()))
+                self.assertEqual(source.read_text(), before)
 
     def test_all_json_types_optional_fields_and_pointer_escaping(self):
         cfg=example();cfg['unknown optional']={'a/b~c':[None,True,False,0,1,-2,1.0,1.125,'','00123','=SUM(A1)','Åä漢字; "quote",\nline',{},[]], 'absent-distinct':{'empty':''}}
@@ -206,10 +218,10 @@ class NavigationTests(unittest.TestCase):
         self.assertIn('prefixpath=Project X/Measurements',c.mapping(c.validate(cfg),'staff-gw','smb-measurements')['options'])
 
     def test_legacy_cifs_prefixpath_option_is_preserved(self):
-        cfg=c.loads((BASE/'config/rpi-share.home.json').read_text())
-        cfg['shares']['code']['cifs_options']+=',prefixpath=Project X'
+        cfg=legacy_example('1.0')
+        cfg['shares']['files']['cifs_options']+=',prefixpath=Project X'
         equal_typed(self,cfg,c.validate(c.import_csv(c.export_csv(cfg))))
-        self.assertIn('prefixpath=Project X',c.mapping(cfg,'nasse','code')['options'])
+        self.assertIn('prefixpath=Project X',c.mapping(cfg,'lab','files')['options'])
 
     def test_conflicting_cifs_definitions_rejected(self):
         cfg=example();cfg['shares']['smb-measurements']['share_root']='Other'
@@ -226,6 +238,34 @@ class NavigationTests(unittest.TestCase):
 
 
 class FileAndClientTests(unittest.TestCase):
+    def test_production_filenames_are_ignored_and_excluded_from_release_archives(self):
+        repo = BASE.parents[1]
+        public = {'rpi-share.example.json', 'rpi-share.example.csv', 'rpi-share.schema.json'}
+        production = {'rpi-share.json', 'rpi-share.home.json', 'rpi-share.aalto.json'}
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            def git(*args):
+                return subprocess.run(['git', *args], cwd=root, check=True, capture_output=True).stdout
+            git('init', '-q')
+            for name in ('.gitignore', '.gitattributes'):
+                (root/name).write_bytes((repo/name).read_bytes())
+            nested = root/'nested'
+            nested.mkdir()
+            for name in public:
+                (nested/name).write_bytes((BASE/'config'/name).read_bytes())
+            private_paths = [directory/name for directory in (root, nested) for name in sorted(production)]
+            for path in private_paths:
+                path.write_text('production fixture')
+            git('add', '.')
+            tracked = set(git('ls-files').decode().splitlines())
+            self.assertEqual(tracked, {'.gitignore', '.gitattributes', *(f'nested/{name}' for name in public)})
+            git('add', '-f', *(str(path.relative_to(root)) for path in private_paths))
+            tree = git('write-tree').decode().strip()
+            with tarfile.open(fileobj=io.BytesIO(git('archive', tree))) as archive:
+                names = {Path(path).name for path in archive.getnames()}
+            self.assertTrue(public <= names)
+            self.assertFalse(names & production)
+
     def test_safe_overwrite_and_permissions(self):
         with tempfile.TemporaryDirectory() as tmp:
             path=Path(tmp)/'config.json';c.atomic_write(path,'old')
@@ -247,7 +287,7 @@ class FileAndClientTests(unittest.TestCase):
 
     def test_builder_cli_both_directions_and_plan(self):
         with tempfile.TemporaryDirectory() as tmp:
-            source=BASE/'config/rpi-share.home.json';csv_path=Path(tmp)/'catalog.csv';destination=Path(tmp)/'catalog.json'
+            source=BASE/'config/rpi-share.example.json';csv_path=Path(tmp)/'catalog.csv';destination=Path(tmp)/'catalog.json'
             command=[sys.executable,'-B',str(BASE/'bin/rpi-share-builder.py')]
             subprocess.run(command+['--json',str(source),'--output',str(csv_path)],check=True,capture_output=True)
             subprocess.run(command+['--csv',str(csv_path),'--output',str(destination)],check=True,capture_output=True)
@@ -284,15 +324,14 @@ class FileAndClientTests(unittest.TestCase):
         return subprocess.run(['bash',str(BASE/'bin/rpi-share'),*args],input=input_text,capture_output=True,text=True,check=True)
 
     def test_existing_v1_list_all_admin_semantics(self):
-        path=str(BASE/'config/rpi-share.aalto.json')
-        normal=self.client('--config',path,'--list').stdout
-        all_entries=self.client('--config',path,'--list','--all').stdout
-        admin=self.client('--config',path,'--list','--admin').stdout
-        self.assertNotIn('teamwork-chem-scratch',normal)
-        self.assertIn('teamwork-chem-scratch',all_entries);self.assertEqual(all_entries,admin)
-
-    def test_existing_home_v1_list(self):
-        self.assertIn('Code',self.client('--config',str(BASE/'config/rpi-share.home.json'),'--list').stdout)
+        with tempfile.TemporaryDirectory() as tmp:
+            path=Path(tmp)/'legacy.json';path.write_text(json.dumps(legacy_example()))
+            normal=self.client('--config',str(path),'--list').stdout
+            all_entries=self.client('--config',str(path),'--list','--all').stdout
+            admin=self.client('--config',str(path),'--list','--admin').stdout
+            self.assertIn('files',normal)
+            self.assertNotIn('maintenance',normal)
+            self.assertIn('maintenance',all_entries);self.assertEqual(all_entries,admin)
 
     def test_tree_runs_without_mount_or_network_tools(self):
         result=self.client('--config',str(BASE/'config/rpi-share.example.json'),'--tree','--group','students')
@@ -306,7 +345,8 @@ class FileAndClientTests(unittest.TestCase):
             result=subprocess.run(['bash',str(prefix/'bin/rpi-share'),'--config',str(BASE/'config/rpi-share.example.json'),'--tree-all'],check=True,capture_output=True,text=True)
             self.assertIn('measurements',result.stdout)
             self.assertTrue((prefix/'bin/rpi-share-builder.py').exists())
-            self.assertFalse((prefix/'share/rpi-share/rpi-share.json').exists())
+            self.assertEqual({path.name for path in (prefix/'share/rpi-share/examples').iterdir()},
+                             {'rpi-share.example.json', 'rpi-share.example.csv', 'rpi-share.schema.json'})
 
     def test_software_install_plan_has_no_writes(self):
         with tempfile.TemporaryDirectory() as tmp:

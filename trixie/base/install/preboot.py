@@ -246,6 +246,26 @@ def kernel_release(firmware, modules=Path('/lib/modules')):
     raise ValueError(f'No installed Raspberry Pi v8 kernel, matching initramfs and kernel modules for {image}.')
 
 
+def kernel_status(pending, boot_id):
+    if not FIRMWARE.parent.is_mount():
+        return f'Verification pending: expected boot partition at {FIRMWARE.parent}'
+    try:
+        original = file_state(FIRMWARE)[0].decode('utf-8','surrogateescape')
+        change = kernel_plan(original) != original
+        release = kernel_release(FIRMWARE)
+    except (PermissionError,FileNotFoundError) as exc:
+        return 'Verification pending: '+str(exc)
+    except (ValueError,OSError,subprocess.SubprocessError) as exc:
+        return 'Unexpected boot configuration: '+str(exc)
+    if change:
+        return 'Kernel selection change required (approval required)'
+    if os.sysconf('SC_PAGE_SIZE') == 4096 and platform.release() == release:
+        return 'Ready – stock v8 kernel, 4096 byte pages'
+    if pending and pending != boot_id:
+        return 'Unexpected running kernel after reboot'
+    return 'Reboot required to verify '+release
+
+
 def configure_kernel(*, approve, pending, boot_id):
     if not FIRMWARE.parent.is_mount():
         raise ValueError(f'Expected a mounted Raspberry Pi boot partition at {FIRMWARE.parent}.')

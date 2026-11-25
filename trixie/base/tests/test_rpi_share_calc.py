@@ -12,7 +12,7 @@ import unittest
 BASE=Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(BASE/'bin'))
 import rpi_share_catalog as c
-from test_rpi_share_catalog import equal_typed
+from test_rpi_share_catalog import equal_typed, legacy_example
 
 
 @unittest.skipUnless(shutil.which('libreoffice'),'LibreOffice not installed; pure CSV interoperability tests remain available')
@@ -34,11 +34,10 @@ class CalcTests(unittest.TestCase):
             restored=c.validate(c.import_csv((output/(name+'.csv')).read_text(encoding='utf-8-sig')))
             equal_typed(self,config,restored)
 
-    def test_actual_calc_home_roundtrip(self):
-        self.roundtrip('home',c.loads((BASE/'config/rpi-share.home.json').read_text()))
-
-    def test_actual_calc_aalto_roundtrip(self):
-        self.roundtrip('aalto',c.loads((BASE/'config/rpi-share.aalto.json').read_text()))
+    def test_actual_calc_legacy_roundtrip(self):
+        for version in (1, '1.0'):
+            with self.subTest(version=version):
+                self.roundtrip('legacy',legacy_example(version))
 
     def test_actual_calc_unicode_types_and_precision(self):
         config=c.loads((BASE/'config/rpi-share.example.json').read_text())

@@ -78,6 +78,8 @@ class KeyboardTests(unittest.TestCase):
                 pw_dir=str(self.root / name), pw_uid={'kim':1000,'chem':1001}[name]),
         ))
         stack.enter_context(patch.dict(os.environ, {}, clear=True))
+        self.alias = stack.enter_context(patch.object(keyboard,'locale_alias_available',return_value=False))
+        stack.enter_context(patch.object(keyboard.subprocess, 'check_output', return_value='C\nC.utf8\nen_GB.utf8\n'))
         self.run = stack.enter_context(patch.object(keyboard.subprocess, 'run'))
 
     def invoke(self, *args):
@@ -85,6 +87,26 @@ class KeyboardTests(unittest.TestCase):
         with redirect_stdout(output):
             self.assertEqual(keyboard.main(list(args)), 0)
         return output.getvalue()
+
+    def test_ssh_regional_override_does_not_select_interface_language(self):
+        env={'LANG':'en_GB.UTF-8','LC_NUMERIC':'C','LC_TIME':'fi_FI.UTF-8'}
+        with redirect_stderr(io.StringIO()):
+            self.assertEqual(keyboard.locale_environment(env), {'LANG':'en_GB.UTF-8','LC_NUMERIC':'C'})
+        self.assertIn('LC_TIME',env)
+        self.alias.return_value=True
+        self.assertEqual(keyboard.locale_environment({'LANG':'local-alias'}),{'LANG':'local-alias'})
+        self.run.assert_not_called()
+
+    def test_generate_only_a_missing_locale_requested_by_the_host(self):
+        config=self.root/'locale.gen'
+        config.write_text('# en_US.UTF-8 UTF-8\nfi_FI.UTF-8 UTF-8\n')
+        self.euid.return_value=0
+        with patch.object(keyboard,'LOCALE_GEN',config), patch.object(keyboard.subprocess,'check_output',
+                side_effect=['C\n','C\nfi_FI.utf8\n']):
+            env=keyboard.locale_environment({'LANG':'C','LC_TIME':'fi_FI.UTF-8'},generate=True)
+        self.assertEqual(env,{'LANG':'C','LC_TIME':'fi_FI.UTF-8'})
+        self.assertEqual(self.run.call_args.args[0],['/usr/sbin/locale-gen','--keep-existing'])
+        self.assertEqual(self.run.call_args.kwargs['env']['LC_ALL'],'C')
 
     def test_default_listing_and_explicit_list(self):
         result = self.invoke()
@@ -164,7 +186,7 @@ class KeyboardTests(unittest.TestCase):
         output = self.invoke('xyz-custom')
         self.run.assert_called_once_with(
             [str(self.sudo), str(self.backend), 'nonint', 'do_configure_keyboard', 'xyz-custom'],
-            stdin=subprocess.DEVNULL, check=True,
+            stdin=subprocess.DEVNULL, check=True, env={'LANG':'C.UTF-8'},
         )
         self.assertIn('layout xyz-custom stored', output)
         self.assertIn('No keyboard reboot needed', output)
@@ -193,7 +215,7 @@ class KeyboardTests(unittest.TestCase):
                     sudo_prefix = [] if elevated else [str(self.sudo)]
                     self.run.assert_called_once_with(
                         sudo_prefix + [str(self.backend), 'nonint', 'do_configure_keyboard', 'fi'],
-                        stdin=subprocess.DEVNULL, check=True,
+                        stdin=subprocess.DEVNULL, check=True, env={'LANG':'C.UTF-8', **({'SUDO_USER':user} if elevated else {})},
                     )
 
     def test_matching_layout_is_a_noop_without_privilege(self):

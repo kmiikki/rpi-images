@@ -35,9 +35,13 @@ From `trixie/base/install`, run setup as the intended desktop user.
 sudo bash setup-rpi.sh
 ```
 
-On first setup, choose your keyboard layout. Finnish is the default. **Show all
-available keyboard layouts** opens a searchable list. Setup applies the layout
-before other questions and keeps it for future runs. On a fresh system, setup
+On first setup, choose a profile and approve the installation plan. For HOME and
+AALTO, setup proposes the matching private rpi-share catalog if available.
+[Catalog filenames and locations](trixie/base/docs/unified-setup.md#share-configuration-and-ownership)
+
+After approval, choose your keyboard layout. Finnish is the default. **Show all
+available keyboard layouts** opens a searchable list. Setup keeps the layout
+for future runs. On a fresh system, setup
 refreshes the APT lists and applies a reviewed full OS upgrade before installing
 the scientific software. If hardware setup or the upgrade requires a reboot,
 confirm it or reboot manually, then run the same setup command again.
@@ -47,7 +51,7 @@ setup configures zoom in with **Ctrl + +**, zoom out with **Ctrl + −**, and
 reset with **Ctrl + 0** for the desktop user.
 
 Choose **GENERAL** for an independent installation, **HOME** for home settings,
-or **AALTO** for the Aalto University CHEM settings. Review and approve the plan.
+or **AALTO** for the Aalto University CHEM settings.
 The defaults install Scientific Python 3.14 with Spyder and the separate
 Raspberry Pi Python 3.13 environment. The approval prompt offers `customize`
 for changes to the defaults. [Advanced options](trixie/base/docs/unified-setup.md#advanced-installation-options)

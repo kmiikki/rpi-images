@@ -9,6 +9,8 @@ import os
 from pathlib import Path
 import platform
 import re
+import runpy
+import shlex
 import shutil
 import socket
 import stat
@@ -21,12 +23,16 @@ import rpi_accounts as accounts
 import installation_profiles as profiles
 import preboot
 import lifecycle
+import wlan
 import os_upgrade
 from diagnostics import Log, redact
 from installation_state import Store
 
 HERE=Path(__file__).resolve().parent
 BASE=HERE.parent
+locale_environment = runpy.run_path(str(BASE/'bin/rpi-keyboard'))['locale_environment']
+SHARE_NAMES = {'GENERAL': 'rpi-share.json', 'HOME': 'rpi-share.home.json', 'AALTO': 'rpi-share.aalto.json'}
+SHARE_EXAMPLE = 'rpi-share.example.json'
 spec=importlib.util.spec_from_file_location('rpi_catalog',BASE/'bin/rpi_share_catalog.py')
 catalog=importlib.util.module_from_spec(spec);spec.loader.exec_module(catalog)
 
@@ -60,7 +66,8 @@ def hosts_alias(text,old,new):
 class Host:
     """Narrow host boundary; tests replace it, never run provisioning commands."""
     def __init__(self):
-        self.env=dict(os.environ,PYTHONDONTWRITEBYTECODE='1')
+        self.env=locale_environment(os.environ)
+        self.env['PYTHONDONTWRITEBYTECODE']='1'
         self.records=None
         self.log=None
         self.approve_firmware=None
@@ -193,6 +200,9 @@ class Host:
             raise ValueError(message) from error
         return True
 
+    def wlan_state(self):
+        return wlan.read_state(self)
+
     def snapshot(self):
         os_release={}
         for line in Path('/etc/os-release').read_text().splitlines():
@@ -228,6 +238,7 @@ class Host:
 def parser():
     p=argparse.ArgumentParser(description=__doc__,
         epilog='Run --manage for maintenance, or --preboot [--plan | --dry-run] for Pi 5 preboot only.')
+    p.add_argument('--wlan-country',type=str.upper,help='two-letter regulatory country (default: existing country or FI)')
     p.add_argument('--keyboard-layout',help='select an installed XKB layout code')
     p.add_argument('--profile-file',type=Path,help='local versioned installation preferences; CLI options override file settings')
     p.add_argument('--ntp-server',action='append',type=profiles.ntp_server,help='NTP hostname/IP; repeat to replace base defaults')
@@ -249,8 +260,10 @@ def parser():
     p.add_argument('--accept-boot-changes',action='store_true',
                    help='explicitly authorize the displayed I²C/SPI and selected Pi 5 kernel boot changes')
     config=p.add_mutually_exclusive_group()
-    config.add_argument('--share-json',type=Path);config.add_argument('--share-csv',type=Path)
-    config.add_argument('--share-example',action='store_true');config.add_argument('--share-later',action='store_true')
+    config.add_argument('--share-json',type=Path,help='use this local JSON instead of discovering a profile catalog')
+    config.add_argument('--share-csv',type=Path,help='import this local CSV instead of discovering a profile catalog')
+    config.add_argument('--share-example',action='store_true',help='explicitly use the bundled generic example')
+    config.add_argument('--share-later',action='store_true',help='skip catalog discovery and leave configuration for later')
     p.add_argument('--share-user',action='append',default=[],help='local catalog owner; repeat; default is primary user')
     p.add_argument('--share-prefix',type=canonical,help='software prefix; keep existing /opt/lab client location when detected, otherwise /usr/local')
     p.add_argument('--replace-share-config',action='store_true')
@@ -265,6 +278,94 @@ def parser():
 def ask(prompt, default):
     answer=input(prompt+' ['+str(default)+']: ').strip()
     return answer or default
+
+
+def share_source_selected(a):
+    return any((a.share_json, a.share_csv, a.share_example, a.share_later))
+
+
+class ShareCatalogError(ValueError):
+    pass
+
+
+def discover_share_catalogs(profile):
+    """Find only the production filename for this profile in the local package layout."""
+    filename = SHARE_NAMES[profile]
+    package = BASE.parents[1] if BASE.parent.name == 'trixie' else BASE
+    example = BASE/'config'/SHARE_EXAMPLE
+    found = {}
+    for directory in (Path.cwd(), HERE, package, package.parent):
+        path = directory/filename
+        if not path.is_file():
+            continue
+        resolved = path.resolve()
+        if resolved.name in SHARE_NAMES.values() and resolved.name != filename:
+            continue
+        if example.is_file() and resolved.samefile(example):
+            continue
+        found[resolved] = None
+    return tuple(found)
+
+
+def choose_share_source(a, candidates):
+    a.share_json = a.share_csv = None
+    a.share_example = a.share_later = False
+    if candidates:
+        for index, path in enumerate(candidates, 1):
+            print(f'  {index}. External {a.profile} catalog: {path}')
+    else:
+        print(f'No matching {a.profile} catalog was found ({SHARE_NAMES[a.profile]}).')
+    while True:
+        options = 'number / ' if candidates else ''
+        choice = ask(f'Share configuration: {options}manual / csv / template / later', 'later')
+        for index, path in enumerate(candidates, 1):
+            if choice == str(index):
+                a.share_json = path
+                return
+        if choice in ('manual', 'csv'):
+            path = input('Local catalog path: ').strip()
+            if path:
+                setattr(a, 'share_json' if choice == 'manual' else 'share_csv', Path(path))
+                return
+        elif choice == 'template':
+            example = BASE/'config'/SHARE_EXAMPLE
+            print(f'Generic public template: {example}')
+            print('Run this in a private directory to create an editable catalog:')
+            print('  '+shlex.join(['python3', str(BASE/'bin/rpi-share-builder.py'), '--csv',
+                                   str(example.with_suffix('.csv')), '--output', SHARE_NAMES[a.profile]]))
+            print('Edit it for your site, then select it manually or rerun setup to discover it.')
+        elif choice == 'later':
+            a.share_later = True
+            a.default_group = None
+            return
+        else:
+            print('Choose a listed catalog or enter manual, csv, template, or later.')
+
+
+def load_share_catalog(a, discovered):
+    path = a.share_json or a.share_csv or discovered
+    example = BASE/'config'/('rpi-share.example.csv' if a.share_csv else SHARE_EXAMPLE)
+    if a.share_example:
+        path = example
+    if path is None:
+        return {}
+    path = path.expanduser().resolve()
+    if not path.is_file():
+        raise ShareCatalogError(f'Share catalog is missing or is not a regular file: {path}')
+    try:
+        public = example.is_file() and path.samefile(example)
+        source = path.read_text(encoding='utf-8-sig')
+        config = catalog.import_csv(source) if a.share_csv else catalog.loads(source)
+        catalog.validate(config)
+        if a.default_group:
+            config['defaults']['group'] = a.default_group
+            catalog.validate(config)
+    except (OSError, ValueError, TypeError) as exc:
+        raise ShareCatalogError(f'Cannot read or validate Share catalog at {path}. Review it locally with rpi-share-builder.py.') from exc
+    label = ('bundled public example (edit before use)' if public else
+             'external CSV' if a.share_csv else 'external production JSON')
+    return dict(config=config, config_source=f'{label}: {path}', config_path=path,
+                config_kind='csv' if a.share_csv else 'json')
 
 
 def interactive(a, state):
@@ -291,20 +392,18 @@ def customize(a, state):
     if a.additional_user is not None:additional_default=' '.join(a.additional_user) or '-'
     additional=ask(prompt,additional_default)
     a.additional_user=[] if additional=='-' else additional.split()
-    for name,default in component_defaults(a).items():
+    defaults = component_defaults(a)
+    if not share_source_selected(a):
+        defaults['share'] = defaults['share'] or bool(discover_share_catalogs(a.profile))
+    elif a.share_json or a.share_csv or a.share_example:
+        defaults['share'] = True
+    for name,default in defaults.items():
         if getattr(a,name) is None:setattr(a,name,ask('Include '+name+'? y/n','y' if default else 'n').lower() in ('y','yes'))
     if a.spyder and not a.ide_prefix:
         prefix=ask('Separate Spyder IDE prefix (- uses the scientific environment)','-')
         if prefix!='-':a.ide_prefix=canonical(prefix)
     prefix=ask('Scientific Python environment path',str(a.lab_prefix or '/opt/lab314'))
     a.lab_prefix=canonical(prefix)
-    if a.share and not any((a.share_json,a.share_csv,a.share_example,a.share_later)):
-        choice=ask('Share configuration: existing / csv / example / later','later')
-        if choice=='existing':a.share_json=Path(input('Existing JSON path: ').strip())
-        elif choice=='csv':a.share_csv=Path(input('Local CSV path: ').strip())
-        elif choice=='example':a.share_example=True
-        elif choice=='later':a.share_later=True
-        else:raise ValueError('unknown configuration choice')
     if a.imaging and not a.imaging_source:
         path=ask('Approved local Scientific Imaging source (- defers installation)','-')
         if path!='-':
@@ -342,6 +441,14 @@ def reuse_selection(a,data):
         a.share_prefix=canonical(data['share_prefix'])
     if not a.share_user:
         a.share_user=data.get('share_owners',[])
+    if not share_source_selected(a) and a.share is not False and data.get('pending_share'):
+        source = data['pending_share']
+        if source['kind'] == 'csv':
+            a.share_csv = Path(source['path'])
+        else:
+            a.share_json = Path(source['path'])
+        if a.default_group is None:
+            a.default_group = source.get('default_group')
     if not a.imaging_source and not a.imaging_app and data.get('imaging'):
         saved_imaging=data['imaging']
         saved_source=Path(saved_imaging['source'])
@@ -379,6 +486,9 @@ def resolve(a,state,host):
     if len(set(extras))!=len(extras) or primary in extras:raise ValueError('duplicate primary/additional accounts')
     defaults=component_defaults(a)
     components={n:getattr(a,n) if getattr(a,n) is not None else v for n,v in defaults.items()}
+    candidates = discover_share_catalogs(a.profile) if a.share is not False and not share_source_selected(a) else ()
+    if a.share is None and (candidates or a.share_json or a.share_csv or a.share_example):
+        components['share'] = True
     if a.profile in ('HOME','AALTO') and not components['share']:raise ValueError('HOME/AALTO include rpi-share; use --share-later to defer its configuration')
     existing_lab=host.environment(a.lab_prefix) if components['lab314'] or components['spyder'] else host.exists(a.lab_prefix)
     existing_conda=host.environment('/opt/conda')
@@ -397,18 +507,15 @@ def resolve(a,state,host):
     hostname_value=a.hostname or state['hostname']
     if (primary not in state['accounts'] or any(u not in state['accounts'] for u in extras)) and not a.plan and not sys.stdin.isatty():
         raise ValueError('new accounts require interactive password input; no changes made')
-    config=None;config_source='DEFERRED: configure later'
-    if a.share_json:
-        config=catalog.loads(a.share_json.read_text(encoding='utf-8-sig'));config_source='existing JSON: '+str(a.share_json)
-    elif a.share_csv:
-        config=catalog.import_csv(a.share_csv.read_text(encoding='utf-8-sig'));config_source='local CSV: '+str(a.share_csv)
-    elif a.share_example:
-        config=catalog.loads((BASE/'config/rpi-share.example.json').read_text());config_source='explicit public example (replace example hosts before real use)'
-    if config is not None:
+    selection = dict(config=None, config_source='DEFERRED: configure later')
+    if len(candidates) > 1:
+        selection.update(config_source='Selection required: multiple matching external catalogs',
+                         share_candidates=candidates)
+    else:
+        selection.update(load_share_catalog(a, candidates[0] if candidates else None))
+    if selection['config'] is not None:
         if not components['share']:raise ValueError('share configuration requires rpi-share selection')
-        if a.default_group:config.setdefault('defaults',{})['group']=a.default_group
-        catalog.validate(config)
-    elif a.default_group:raise ValueError('--default-group requires a selected configuration source')
+    elif a.default_group and not candidates:raise ValueError('--default-group requires a selected configuration source')
     owners=a.share_user or [primary]
     if len(set(owners))!=len(owners):raise ValueError('duplicate catalog owners')
     for owner in owners:
@@ -419,13 +526,15 @@ def resolve(a,state,host):
                 components=components,existing_lab=existing_lab,existing_conda=existing_conda,existing_rpi=existing_rpi,
                 existing_ide=existing_ide,native_lab=existing_lab and host.native_lab314(a.lab_prefix),
                 existing_spyder=existing_lab and host.exists(a.lab_prefix/'bin/spyder'),
-                config=config,config_source=config_source,owners=owners,
+                **selection,owners=owners,
                 existing_wolfram=bool(state.get('wolfram',{}).get('engine_installed') or state.get('wolfram',{}).get('cli')),
                 share_prefix=a.share_prefix or (Path('/opt/lab') if host.exists('/opt/lab/bin/rpi-share') else Path('/usr/local')))
 
 
 def stages(a,plan):
     c=plan['components'];result=[('accounts','KEEP existing passwords; create only missing approved accounts'),('profile','NTP '+plan['ntp']+'; SSH '+plan['ssh'])]
+    if plan.get('wlan_country'):
+        result.append(('wlan',f'Enable WLAN in {plan["wlan_country"]}'))
     if plan.get('desktop_user') and plan.get('keyboard_layout') in ('fi','se'):
         result.append(('terminal-shortcuts','Configure FI/SE zoom shortcuts if LXTerminal is the selected terminal'))
     if c['system']:result.append(('system','ENSURE existing APT dependency lists'))
@@ -462,23 +571,43 @@ def config_destination(owner):
     directory=home/'.config';destination=directory/'rpi-share.json'
     if directory.is_symlink() or destination.is_symlink():raise ValueError('symlinked user configuration refused')
     if directory.exists() and directory.stat().st_uid not in (0,entry['uid']):raise ValueError('configuration directory belongs to another user')
+    if destination.exists() and not destination.is_file():raise ValueError('Share configuration must be a regular file: '+str(destination))
     return entry,directory,destination
 
 
 def install_config(plan,replace=False):
-    if plan['config'] is None:return 'DEFERRED: no production catalog selected'
+    if plan['config'] is None:return 'DEFERRED: no catalog selected'
     data=json.dumps(plan['config'],ensure_ascii=False,sort_keys=True,indent=2)+'\n'
     destinations=[config_destination(owner) for owner in plan['owners']]
-    # Precheck every destination before writing any user's configuration.
-    for _,_,path in destinations:
-        if path.exists() and not catalog.same_value(catalog.loads(path.read_text()),plan['config']) and not replace:
-            raise ValueError('existing user configuration differs; review --replace-share-config: '+str(path))
+    outcomes = []
     for entry,directory,path in destinations:
-        if path.exists() and catalog.same_value(catalog.loads(path.read_text()),plan['config']):
-            os.chown(path,entry['uid'],entry['gid']);continue
+        existing = path.exists()
+        if existing:
+            if path.resolve() == plan.get('config_path'):
+                outcomes.append(f'KEPT selected source {path}')
+                continue
+            if not replace:
+                outcomes.append(f'KEPT existing {path}')
+                continue
+            try:
+                same = catalog.same_value(catalog.loads(path.read_text(encoding='utf-8-sig')), plan['config'])
+            except ValueError:
+                same = False  # Explicit replacement can repair an invalid existing JSON.
+            if same:
+                outcomes.append(f'KEPT matching {path}')
+                continue
         directory.mkdir(mode=0o700,exist_ok=True);os.chown(directory,entry['uid'],entry['gid'])
-        catalog.atomic_write(path,data,replace);os.chown(path,entry['uid'],entry['gid'])
-    return 'CONFIGURED for '+', '.join(plan['owners'])+'; remote access NOT TESTED'
+        catalog.atomic_write(path,data,replace and existing);os.chown(path,entry['uid'],entry['gid'])
+        outcomes.append(f'{"REPLACED" if existing else "CONFIGURED"} {path}')
+    return '; '.join(outcomes)
+
+
+def apply_wlan(host,plan,store):
+    detail=wlan.configure(host,plan['wlan_country'],expected=plan['previous_wlan_country'],
+                          data=store.data if store else None)
+    if store and not detail.startswith('DEFERRED'):
+        store.data.pop('pending_wlan',None)
+    return detail
 
 
 def apply(a,plan,state,host):
@@ -527,6 +656,8 @@ def apply(a,plan,state,host):
                         lifecycle.reconcile_profile(store,host,plan)
                     else:
                         shell(script,*(['GENERAL'] if script=='pre_profile.sh' else []))
+                elif name=='wlan':
+                    detail=apply_wlan(host,plan,store)
                 elif name=='terminal-shortcuts':
                     detail=lifecycle.apply_terminal_shortcuts(store,host,plan['desktop_user'],plan['keyboard_layout'])
                 elif name=='system':
@@ -608,6 +739,8 @@ def apply(a,plan,state,host):
                     else:
                         shell('install_rpi_share.sh','--prefix',plan['share_prefix'])
                     detail=install_config(plan,a.replace_share_config)
+                    if store:
+                        store.data.pop('pending_share',None)
                 elif name=='imaging':
                     source=a.imaging_source
                     missing=[app for app in a.imaging_app if not host.exists(lifecycle.app_record(app))] if store else a.imaging_app
@@ -685,8 +818,6 @@ def apply(a,plan,state,host):
     print('\nINSTALLATION SUMMARY')
     for key in ('profile','school','hostname','primary','additional','ssh','ntp','config_source'):
         print(key+': '+str(plan[key]))
-    print('default_navigation_group: '+str((plan['config'].get('defaults',{}).get('group') or 'all') if plan['config'] else 'DEFERRED'))
-    if plan['config']:print('additional_navigation_groups: '+str(plan['config']['defaults'].get('additional_groups') or []))
     print('sudo: existing approved NOPASSWD policy preserved; primary admin verified separately')
     for name,status,detail in results:print(status,name,detail)
     if store:
@@ -728,8 +859,14 @@ def show_plan(a, plan, state, boot_status):
         print('  Pi 5 preboot             Applies to Raspberry Pi 5 Model B on Trixie')
     if preboot.is_pi5_model(state['model']):
         kernel_selected=a.kernel_4k if a.kernel_4k is not None else plan['components']['spyder']
-        print('  Pi 5 kernel              '+('Verify stock 4 KiB kernel; changing boot requires approval'
+        print('  Pi 5 kernel              '+(plan.get('kernel_status','Verification pending')
               if kernel_selected else 'Keep current boot selection'))
+    if plan.get('wlan_country'):
+        previous=plan.get('previous_wlan_country')
+        change=f' (currently {previous})' if previous and previous!=plan['wlan_country'] else ''
+        print('  Ethernet and Wi-Fi       Keep Ethernet; enable WLAN in '+plan['wlan_country']+change)
+    elif a.plan:
+        print('  Ethernet and Wi-Fi       Inspect target WLAN country; default to FI if unset')
     for label, value in (('Hostname',plan['hostname']),('SSH',plan['ssh']),('NTP',plan['ntp']),
                          ('Full OS upgrade',plan.get('os_upgrade_status','First-install stage'))):
         print(f'  {label:<24} {value}')
@@ -753,6 +890,14 @@ def show_plan(a, plan, state, boot_status):
         print(f'  {label:<24} {label_action(key)}')
     if plan['components']['share']:
         print(f"  Share configuration      {plan['config_source']}; owners: {', '.join(plan['owners'])}")
+        for path in plan.get('share_candidates', ()):
+            print(f'    Matching external catalog: {path}')
+        if plan.get('share_candidates'):
+            print('    Select a catalog interactively or use --share-json PATH / --share-later.')
+        if plan['config'] is not None:
+            print('    Existing catalogs: '+('replacement authorized' if a.replace_share_config else 'keep'))
+        elif not plan.get('share_candidates') and not a.share_later:
+            print(f'    No matching {plan["profile"]} production catalog. Use --share-json PATH to select a local file.')
 
 
 def main(argv=None,host=None):
@@ -790,28 +935,54 @@ def normal_setup(a,state,host,target,firmware):
     if a.plan and target and isinstance(host,Host) and os.geteuid()==0:
         data=Store().load()
     explicit_ssh=a.ssh is not None
+    source_can_change = not share_source_selected(a)
     reuse_selection(a,data)
     if not a.profile and not sys.stdin.isatty() and a.plan:
         a.profile='GENERAL'
     if isinstance(host,Host):
         host.approve_firmware=lambda: a.accept_boot_changes or (
             sys.stdin.isatty() and ask('Approve displayed I²C/SPI boot changes? y/N','n').lower() in ('y','yes'))
-    if target:
-        print('EARLY HARDWARE PREVIEW' if a.plan else 'EARLY HARDWARE SETUP',flush=True)
-        status,layout=host.run_preboot(preview=a.plan,layout=layout,
-                                      interactive=not a.plan and sys.stdin.isatty(),firmware=firmware)
+    if target and (a.plan or firmware):
+        print('EARLY HARDWARE PREVIEW',flush=True)
+        status,layout=host.run_preboot(preview=True,layout=layout,firmware=firmware)
         if firmware:
             boot_status=status
         if not a.plan and firmware and status is preboot.BootStatus.DEVICES_MISSING:
             preboot.report_reboot(status)
             return 1
+    country = a.wlan_country
+    previous = None
+    if target and hasattr(host,'wlan_state'):
+        previous = wlan.existing_country(host.wlan_state())
+        pending = (data or {}).get('pending_wlan',{})
+        default = pending.get('country') if pending.get('previous') == previous else None
+        default = default or previous or 'FI'
+        if not country and not a.plan and not a.yes and sys.stdin.isatty():
+            country = ask('WLAN regulatory country (two-letter ISO code)',default).upper()
+        country = country or default
+    if country and country not in wlan.countries():
+        raise ValueError('Invalid WLAN regulatory country')
     while True:
-        plan=resolve(a,state,host)
+        try:
+            plan=resolve(a,state,host)
+        except ShareCatalogError as exc:
+            if a.plan or a.yes or not sys.stdin.isatty() or not source_can_change:
+                raise
+            print(exc)
+            choose_share_source(a, discover_share_catalogs(a.profile))
+            continue
+        candidates = plan.get('share_candidates', ())
+        if candidates and not a.plan and sys.stdin.isatty():
+            choose_share_source(a, candidates)
+            continue
         established=bool(data and data.get('profile'))
         plan.update(preboot=target and firmware, keyboard_layout=layout,
                     desktop_user=lifecycle.terminal_target(state) if target else None,
                     reconcile=bool(established or any(state.get('existing',{}).values())) and bool(store),
                     explicit_ssh=explicit_ssh)
+        plan.update(wlan_country=country,previous_wlan_country=previous)
+        if target and firmware and isinstance(host,Host):
+            plan['kernel_status']=preboot.kernel_status((data or {}).get('pending_kernel_boot'),lifecycle.boot_id())
         if a.plan:
             plan['os_upgrade_status']='Requested' if a.apt_upgrade else 'Automatic for reliably identified first installations'
         elif store:
@@ -820,18 +991,38 @@ def normal_setup(a,state,host,target,firmware):
         if a.plan:
             print('PLAN ONLY: no accounts, passwords, packages, host settings, configuration files or environments changed.')
             return 0
-        if a.yes or (established and getattr(a,'reconcile_without_prompt',False)):
+        if candidates:
+            raise ValueError('Multiple matching Share catalogs require --share-json PATH or --share-later.')
+        if a.yes or (established and getattr(a,'reconcile_without_prompt',False) and plan['config'] is None
+                     and country in (None,previous)):
             if established:
                 print('Reconciling saved installation choices with current definitions. Package updates are available in --manage.')
             break
-        choice=ask('Apply this installation plan? y/N/customize','n').lower() if sys.stdin.isatty() else 'n'
+        can_choose_share = plan['components']['share'] and source_can_change
+        if can_choose_share and plan['config'] is None and not a.share_later:
+            print('Choose share to select a local catalog or view the generic template. Approve the plan to configure later.')
+        prompt = 'Apply this installation plan? y/N/customize' + ('/share' if can_choose_share else '')
+        choice=ask(prompt,'n').lower() if sys.stdin.isatty() else 'n'
         if choice in ('y','yes'):
             break
         if choice in ('c','customize'):
             customize(a,state)
             continue
+        if choice == 'share' and can_choose_share:
+            choose_share_source(a, discover_share_catalogs(a.profile))
+            continue
         print('Cancelled software installation.')
         return 0
+    if target:
+        print('EARLY HARDWARE SETUP',flush=True)
+        status,layout=host.run_preboot(preview=False,layout=a.keyboard_layout,
+                                      interactive=sys.stdin.isatty(),firmware=firmware)
+        plan['keyboard_layout']=layout
+        if firmware:
+            boot_status=status
+        if firmware and status is preboot.BootStatus.DEVICES_MISSING:
+            preboot.report_reboot(status)
+            return 1
     if store:
         lifecycle.save_selection(store,a,plan,state)
         plan['confirm_significant']=lambda description: a.yes or (
@@ -872,6 +1063,14 @@ def normal_setup(a,state,host,target,firmware):
         if firmware:
             preboot.report_reboot(boot_status)
         if kernel_reboot or boot_status is preboot.BootStatus.REBOOT_REQUIRED or os_upgrade.reboot_pending(data):
+            if country and store:
+                if getattr(host,'log',None):
+                    host.log.stage='wlan'
+                with store.stage('wlan'):
+                    detail=apply_wlan(host,plan,store)
+                    print(detail)
+                    if detail.startswith('DEFERRED'):
+                        store.data['components']['wlan']['status']='deferred'
             if os_upgrade.reboot_pending(data):
                 print('Reboot required for the completed OS upgrade.')
             print('Software installation is paused. After reboot run sudo bash setup-rpi.sh again.')

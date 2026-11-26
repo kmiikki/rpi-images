@@ -86,6 +86,8 @@ def ensure_user(name, admin=False, passwordless=False):
         # No login shell until passwd and the requested privileges succeed.
         run(['useradd','--create-home','--shell','/usr/sbin/nologin','--',name])
         try:
+            role = 'primary administrator' if passwordless else 'additional administrator' if admin else 'local user'
+            print(f"Creating {role} account: {name}\nSet password for account '{name}'.", flush=True)
             run(['passwd',name])
             if admin: run(['usermod','-aG','sudo',name])
             if passwordless: run(['bash',HERE/'account-policy.sh',name])

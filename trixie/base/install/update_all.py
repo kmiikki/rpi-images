@@ -18,6 +18,7 @@ from installation_state import ABSENT, UNKNOWN, atomic_write, now, sync_director
 import lifecycle
 import os_upgrade
 import preboot
+import wolfram
 
 HERE = lifecycle.HERE
 BASE = lifecycle.BASE
@@ -134,6 +135,9 @@ def file_plan(store, host, selected, layout):
             source('share', (BASE/('bin' if executable else 'config')/name), destination,
                    0o755 if executable and name!='rpi_share_catalog.py' else 0o644)
         print('  KEEP existing rpi-share catalogs and mount settings.')
+    if lifecycle.selected_chromium(store.data)=='shared' and host.exists('/usr/bin/chromium'):
+        for path, destination in reversed(lifecycle.CHROMIUM_FILES):
+            source('chromium', path, destination)
     if store.data.get('components',{}).get('preboot',{}).get('status')=='applied':
         name=str(preboot.FIRMWARE)
         path=store.path(name)
@@ -454,7 +458,7 @@ def terminal_plan(store,host,layout):
     if layout not in ('fi','se') or not store.data.get('terminal_shortcuts'):
         print('  KEEP LXTerminal settings.')
         return None
-    target=lifecycle.terminal_target(host.snapshot())
+    target=lifecycle.installed_desktop_target(store,host)
     tracked=store.data['terminal_shortcuts'].get(target['name']) if target else None
     if not tracked or any(tracked.get(key)!=value for key,value in target.items()):
         print('  PRESERVE LXTerminal settings (requires the recorded desktop user).')
@@ -491,7 +495,9 @@ def verify(host,store,selected,layout,conda,imaging):
         if runner.is_file():
             host.run([runner,'--help'],capture=True)
     if selected.get('wolfram'):
-        host.run(['dpkg-query','-W','wolfram-engine'])
+        wolfram.verify(host,store)
+    if store.data.get('profile'):
+        print(lifecycle.chromium_policy(store))
     if imaging is not None:
         lifecycle.run_imaging(store,host,'diagnose')
     print('Keyboard layout retained:',layout or 'unknown')
@@ -544,8 +550,17 @@ def run(host,store,args):
     with lifecycle.inspection(host):
         work=Path(host.env['TMPDIR'])
         apt=apt_plan(host,store,work/'apt',selected)
+        wolfram_update=None
+        for action in apt[3]:
+            match=re.match(r'^Inst wolfram-engine(?::\S+)? (?:\[[^\]]+\] )?\((\S+)',action)
+            if match:
+                wolfram_update=wolfram.package_metadata(host,match[1],apt[1])
+                wolfram.show_preflight(host,wolfram_update,strict=not args.plan)
+                print('Approving this update authorizes installation under the displayed Wolfram terms.')
         conda=conda_plans(host,store,selected)
         print('\nManaged programs and settings')
+        if selected.get('wolfram'):
+            print('  Reconcile Wolfram desktop entries from the installed package after APT.')
         layout=preboot.active_layout()
         files=file_plan(store,host,selected,layout)
         terminal=terminal_plan(store,host,layout)
@@ -562,6 +577,8 @@ def run(host,store,args):
         if args.plan:
             print('PLAN ONLY: no installed files or packages changed.')
             return 0
+        if wolfram_update and args.yes and not args.accept_wolfram_license:
+            raise ValueError('Update All with --yes and a Wolfram package change requires --accept-wolfram-license.')
         if not lifecycle.confirm(args) or apt[4] and not os_upgrade.confirm_removals(sorted(apt[4])):
             print('Update All cancelled.')
             return 1
@@ -580,6 +597,8 @@ def run(host,store,args):
                 if imaging is not None and lifecycle.run_imaging(store,host,'update',preview=True).stdout!=imaging:
                     raise ValueError('Scientific Imaging plan changed after review.')
                 apply_apt(store,host,apt)
+                if selected.get('wolfram') and wolfram.PACKAGE in lifecycle.apt_inventory(host):
+                    lifecycle.reconcile_wolfram_launchers(store,host)
                 for step,command in zip(conda,commands):
                     apply_conda(host,store,step,command)
                 for component in dict.fromkeys(file.component for file in files):

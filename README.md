@@ -32,7 +32,7 @@ This profile provides:
 * Raspberry Pi OS Trixie base installation
 * common laboratory/scientific environment
 * Python 3.14 environment called `lab314`
-* Spyder outside the environment
+* Spyder integrated into `lab314`
 * scientific packages inside `lab314`
 * Raspberry Pi specific packages such as Picamera2
 
@@ -53,7 +53,7 @@ preferences, see the [profile builder](trixie/base/docs/profile-builder.md).
 ## Installation profiles
 
 `setup-rpi.sh` is the only supported entry point for new Raspberry Pi OS Trixie
-installations. Choose a profile and approve the plan before setup applies your
+installations. Choose a profile and review the hostname and WLAN country before setup applies your
 keyboard layout and initializes the Raspberry Pi 5 Model B hardware interfaces.
 If setup pauses for a reboot, repeat the same command afterward.
 
@@ -78,3 +78,7 @@ directory tree together; Git metadata is not required.
 See the [base installation guide](trixie/base/README.md#installation-profiles)
 and [unified setup guide](trixie/base/docs/unified-setup.md) for prerequisites,
 optional components, maintenance and recovery.
+
+See the [changelog](CHANGELOG.md) and
+[Pi 5 pre-release acceptance guide](trixie/base/docs/pre-release-acceptance-20261126.md)
+for the current correction round.

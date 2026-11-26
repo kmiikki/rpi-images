@@ -477,7 +477,9 @@ sudo -n true
 
 ## Optional Wolfram Engine
 
-Wolfram Engine is not installed by default.
+Wolfram Engine is selected by default in AALTO and optional in GENERAL and HOME.
+The installer reports its disk use and license terms before approval. On the
+desktop, choose **Wolfram Mathematica (GUI)** or **Wolfram Language (CLI)**.
 
 Install:
 

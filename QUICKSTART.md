@@ -35,8 +35,10 @@ From `trixie/base/install`, run setup as the intended desktop user.
 sudo bash setup-rpi.sh
 ```
 
-On first setup, choose a profile and approve the installation plan. For HOME and
-AALTO, setup proposes the matching private rpi-share catalog if available.
+On first setup, choose a profile, confirm the hostname and WLAN country, and
+review the installation plan. Press Enter to keep the current hostname. Setup
+names each new account before prompting for its password. For HOME and AALTO,
+setup proposes the matching private rpi-share catalog if available.
 [Catalog filenames and locations](trixie/base/docs/unified-setup.md#share-configuration-and-ownership)
 
 After approval, choose your keyboard layout. Finnish is the default. **Show all
@@ -44,17 +46,28 @@ available keyboard layouts** opens a searchable list. Setup keeps the layout
 for future runs. On a fresh system, setup
 refreshes the APT lists and applies a reviewed full OS upgrade before installing
 the scientific software. If hardware setup or the upgrade requires a reboot,
-confirm it or reboot manually, then run the same setup command again.
+confirm it or reboot manually, then run the same setup command again. It
+reuses the approved settings and checks the stored and active WLAN country.
 
 When Finnish or Swedish is selected and LXTerminal is the default terminal,
 setup configures zoom in with **Ctrl + +**, zoom out with **Ctrl + −**, and
-reset with **Ctrl + 0** for the desktop user.
+reset with **Ctrl + 0** for the desktop user. Run `lxterminal --no-remote`
+to try the shortcuts in a separate window during the current login.
 
 Choose **GENERAL** for an independent installation, **HOME** for home settings,
 or **AALTO** for the Aalto University CHEM settings.
 The defaults install Scientific Python 3.14 with Spyder and the separate
 Raspberry Pi Python 3.13 environment. The approval prompt offers `customize`
 for changes to the defaults. [Advanced options](trixie/base/docs/unified-setup.md#advanced-installation-options)
+
+AALTO selects optional Wolfram and shows its package sizes and license terms
+in the plan. Select `customize` to skip it. Its menu entries are
+**Wolfram Mathematica (GUI)** and **Wolfram Language (CLI)**. Wolfram can also
+be selected on GENERAL and HOME. AALTO defaults to regular Chromium browsing
+without the desktop keyring and with password saving disabled. GENERAL and HOME keep the personal
+browser policy by default. Select `shared` in Customize when setting up a
+shared machine with either profile.
+[Wolfram details](trixie/base/docs/wolfram.md) · [Chromium policy](trixie/base/docs/unified-setup.md#chromium-policy)
 
 ## 4. Open a fresh terminal and verify
 
@@ -96,6 +109,8 @@ rpicam-hello --list-cameras
 Picamera2/libcamera packages. Power down before connecting a camera ribbon.
 A listed camera and successful imports do not replace a physical capture test.
 Base setup does not automatically install the Scientific Imaging application suite.
+USB camera support is included in the separate Scientific Imaging suite. The
+release has no USB-camera validation on Raspberry Pi OS Trixie.
 
 ## Next steps
 

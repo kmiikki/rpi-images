@@ -108,6 +108,17 @@ class KeyboardTests(unittest.TestCase):
         self.assertEqual(self.run.call_args.args[0],['/usr/sbin/locale-gen','--keep-existing'])
         self.assertEqual(self.run.call_args.kwargs['env']['LC_ALL'],'C')
 
+    def test_failed_generation_keeps_usable_session_categories(self):
+        config=self.root/'locale.gen'
+        config.write_text('fi_FI.UTF-8 UTF-8\n')
+        self.euid.return_value=0
+        self.run.side_effect=subprocess.CalledProcessError(1,['locale-gen'])
+        env={'LANG':'en_GB.UTF-8','LC_TIME':'fi_FI.UTF-8','LC_NUMERIC':'en_GB.UTF-8'}
+        with patch.object(keyboard,'LOCALE_GEN',config), redirect_stderr(io.StringIO()) as err:
+            self.assertEqual(keyboard.locale_environment(env,generate=True),
+                             {'LANG':'en_GB.UTF-8','LC_NUMERIC':'en_GB.UTF-8'})
+        self.assertIn('local fallback',err.getvalue())
+
     def test_default_listing_and_explicit_list(self):
         result = self.invoke()
         self.assertEqual(self.invoke('--list'), result)

@@ -8,15 +8,18 @@ import os
 from pathlib import Path
 import platform
 import re
+import shlex
 import shutil
 import subprocess
 import sys
 import tempfile
 
 from installation_state import ABSENT, UNKNOWN, Store, now
+import locale_setup
 import os_upgrade
 from os_upgrade import boot_id
 import wlan
+import wolfram
 import preboot
 
 HERE = Path(__file__).resolve().parent
@@ -28,6 +31,8 @@ LABELS = {
     'imaging': 'Scientific Imaging applications', 'profile': 'System settings',
     'spyder-ide': 'Separate Spyder environment',
     'terminal-shortcuts': 'LXTerminal FI/SE zoom shortcuts',
+    'chromium': 'Chromium browser policy',
+    'locales': 'Regional locales',
 }
 DEFAULT_PATHS = {
     'conda': '/opt/conda', 'lab314': '/opt/lab314', 'hardware': '/opt/rpi',
@@ -53,6 +58,10 @@ CONDA_PATH_CONTENT = b'# Conda is available through /usr/local/bin.\n'
 SCIENTIFIC_BROWSER = '/usr/local/bin/rpi-scientific-browser'
 HARDWARE_BRIDGE = f'/opt/rpi/lib/python{sys.version_info.major}.{sys.version_info.minor}/site-packages/aalto-system-dist-packages.pth'
 PACKAGE = re.compile(r'[A-Za-z0-9][A-Za-z0-9_.-]*')
+CHROMIUM_FILES = (
+    (BASE/'config/chromium/99-rpi-images-shared', '/etc/chromium.d/99-rpi-images-shared'),
+    (BASE/'config/chromium/99-rpi-images-shared.json', '/etc/chromium/policies/managed/99-rpi-images-shared.json'),
+)
 
 
 def apt_inventory(host):
@@ -70,6 +79,48 @@ def services(host):
         'ntp': host.probe(['timedatectl','show','-p','NTP','--value']).stdout.strip(),
         'timesync': host.probe(['systemctl','is-active','systemd-timesyncd']).stdout.strip(),
     }
+
+
+def ssh_status(host):
+    state = {}
+    for unit, activity, startup in (('ssh.service', 'SSH service', 'SSH startup'),
+                                    ('ssh.socket', 'SSH socket', 'SSH socket startup')):
+        for query, field in (('is-active', activity), ('is-enabled', startup)):
+            try:
+                output = host.probe(['systemctl', query, unit]).stdout.strip()
+            except OSError:
+                output = ''
+            state[field] = output or 'unknown'
+    return state
+
+
+def report_ssh(policy, state, indent=''):
+    print(f'{indent}{"SSH policy":<24} {policy}')
+    for label, value in state.items():
+        print(f'{indent}{label:<24} {value}')
+
+
+def apply_locales(store, host, proposal):
+    current=locale_setup.plan(host,store)
+    if current != proposal:
+        raise ValueError('Locale state changed after review. Review a new plan.')
+    # The locale archive and configuration are shared with the OS and users.
+    # Keep the requested names for repair without claiming ownership of the file.
+    store.data['locales']=list(proposal.locales)
+    with store.stage('locales'):
+        try:
+            locale_setup.apply(host,store,proposal)
+        finally:
+            if hasattr(host,'refresh_locale_environment'):
+                host.refresh_locale_environment()
+        if proposal.unavailable or proposal.fallback:
+            store.data['components']['locales']['status']='deferred'
+            return 'LIMITED some locale requests remain unavailable; see the plan above.'
+    if proposal.generate:
+        return 'Generated and verified '+', '.join(proposal.generate)
+    if proposal.enable:
+        return 'Enabled for future generation: '+', '.join(row.split()[0] for row in proposal.enable)
+    return 'Verified '+(', '.join(proposal.locales) or 'the existing locale inventory')
 
 
 def reconcile_file(store, name, data, mode, *, edit=None):
@@ -131,14 +182,15 @@ def reconcile_scientific_browser(store, host, prefix):
             raise ValueError(f'Local scientific browser definition kept for review: {destination}')
 
 
-def install_missing_apt(host, packages):
+def install_missing_apt(host, packages, *, refresh=True):
     installed={name.split(':',1)[0] for name in apt_inventory(host)}
-    missing=sorted(set(packages)-installed)
+    missing=sorted(name for name in set(packages) if name.split('=',1)[0] not in installed)
     if not missing:
         return
     options=['--no-upgrade','-o','DPkg::Options::=--force-confold']
     with command_environment(host,LC_ALL='C'):
-        host.run(['apt-get','update'])
+        if refresh:
+            host.run(['apt-get','update'])
         plan=host.run(['apt-get','--simulate','install',*options,*missing],capture=True).stdout
         for line in plan.splitlines():
             match=re.match(r'^(?:Inst|Remv|Purg) (\S+)',line)
@@ -146,6 +198,107 @@ def install_missing_apt(host, packages):
                 raise ValueError(f'Adding the missing APT packages would change installed packages: {line}. Review through --manage.')
         host.run(['apt-get','install','-y','--no-remove',*options,*missing])
     print('INSTALLED missing APT selections: '+', '.join(missing))
+
+
+def reconcile_wolfram_launchers(store, host):
+    expected, _ = wolfram.definitions(host, store)
+    stale = {name: entry for name, entry in store.data['paths'].items()
+             if entry['component'] == 'wolfram-launchers' and name not in expected}
+    with store.stage('wolfram-launchers', [(path, False) for path in expected], repair_missing=True):
+        for path, content in expected.items():
+            if reconcile_file(store, path, content, 0o644) == 'preserved':
+                raise ValueError(f'Local Wolfram desktop entry preserved for review: {path}')
+        for path, entry in stale.items():
+            if store.inspect(path) == entry['original']:
+                continue
+            if entry.get('conflict') or entry['original'] != ABSENT:
+                raise ValueError(f'Old Wolfram desktop entry requires review: {path}')
+            store.restore_file(path, entry)
+            store.save()
+
+
+def install_wolfram(host, store, *, installed, reviewed, confirm):
+    if not installed:
+        host.run(['apt-get','update'])
+        package=wolfram.candidate(host)
+        wolfram.show_preflight(host,package,strict=True)
+        if package!=reviewed and not confirm():
+            return 'DEFERRED Wolfram APT candidate requires approval; rerun setup or choose --no-wolfram.'
+        install_missing_apt(host,[f'{wolfram.PACKAGE}={package.version}'],refresh=False)
+    reconcile_wolfram_launchers(store,host)
+    wolfram.verify(host,store,smoke=not installed)
+    store.data.pop('pending_wolfram',None)
+    return 'Engine CLI, WolframScript, GUI executable and desktop entries checked; menu launches pending.'
+
+
+def selected_chromium(selection):
+    mode = selection.get('chromium_policy') or ('shared' if selection.get('profile')=='AALTO' else 'personal')
+    if mode not in ('personal','shared'):
+        raise ValueError('Invalid saved Chromium policy. Review the installation record.')
+    return mode
+
+
+def chromium_description(mode):
+    return {'personal': 'personal (regular Chromium profile and keyring)',
+            'shared': 'shared (regular profile, keyring-free with password saving disabled)'}[mode]
+
+
+def chromium_personal_restore(store):
+    """Review both overrides before restoring anything."""
+    paths = (store.data or {}).get('paths', {})
+    restore = []
+    for _, path in CHROMIUM_FILES:
+        current = store.inspect(path)
+        if current == ABSENT:
+            continue
+        record = paths.get(path, {})
+        if (record.get('component') != 'chromium' or record.get('original') != ABSENT
+                or record.get('conflict') or record.get('installed') != current):
+            raise ValueError(f'Local Chromium override preserved for review: {path}')
+        restore.append((path, record))
+    return restore
+
+
+def chromium_policy(store, *, mode=None, apply=False):
+    mode = mode or selected_chromium(store.data or {})
+    if mode == 'personal':
+        restore = chromium_personal_restore(store)
+        if restore and not apply:
+            raise ValueError('Chromium personal policy pending: use repair to restore the managed overrides.')
+        for path, record in restore:
+            store.restore_file(path, record)
+            store.save()
+        return f'Chromium policy verified: {chromium_description(mode)}.'
+    launcher = store.path('/usr/bin/chromium')
+    if not launcher.is_file():
+        return 'DEFERRED: Chromium is not installed.'
+    if b'/etc/chromium.d/' not in launcher.read_bytes():
+        raise ValueError('Chromium package launcher no longer loads /etc/chromium.d; review the shared policy.')
+    for directory in (wolfram.LOCAL, *wolfram.VENDOR):
+        desktop = store.path(f'{directory}/chromium.desktop')
+        if desktop.is_file():
+            command = shlex.split(wolfram.entry_fields(desktop).get('Exec', ''))
+            if not command or command[0] not in ('chromium', '/usr/bin/chromium'):
+                raise ValueError(f'Chromium menu entry bypasses the package launcher: {desktop}')
+            break
+    else:
+        raise ValueError('Chromium desktop entry is missing.')
+    desired = json.loads(CHROMIUM_FILES[1][0].read_text())
+    policy = store.path(CHROMIUM_FILES[1][1])
+    for other in policy.parent.glob('*.json'):
+        if other != policy:
+            values = json.loads(other.read_text())
+            if any(key in values and values[key] != value for key, value in desired.items()):
+                raise ValueError(f'Conflicting Chromium policy requires review: {other}')
+    for source, path in reversed(CHROMIUM_FILES):  # Install policy before enabling the browser flags.
+        if apply and reconcile_definition(store, source, path, '644') == 'preserved':
+            raise ValueError(f'Local Chromium configuration preserved for review: {path}')
+        file = store.path(path)
+        if (file.is_symlink() or not file.is_file() or file.stat().st_uid != os.geteuid()
+                or file.stat().st_mode & 0o777 != 0o644 or file.read_bytes() != source.read_bytes()):
+            raise ValueError(f'Chromium configuration missing or different: {path}')
+    return ('Chromium package hook and shared policy verified. '
+            'PENDING MANUAL ACCEPTANCE: start Chromium from the menu and terminal in a fresh session.')
 
 
 def reconcile_system(store, host, model):
@@ -318,6 +471,8 @@ def target_paths(stage, a, plan, state):
         return [(str(a.ide_prefix),True)]
     elif stage == 'spyder-desktop':
         files = [destination for _, destination, _ in SPYDER_LAUNCHER]
+    elif stage == 'chromium':
+        files = [destination for _, destination in CHROMIUM_FILES]
     elif stage == 'shell':
         files = ['/usr/local/bin/envrun']
         if a.lab_prefix == Path('/opt/lab314'):
@@ -360,8 +515,8 @@ def spyder_pending():
     print('Spyder graphical acceptance: PENDING (check as a desktop user)')
 
 
-def terminal_target(state):
-    user = state.get('invoking_user')
+def terminal_target(state, user=None):
+    user = user or state.get('invoking_user')
     account = state.get('accounts',{}).get(user)
     if account and account['uid']>0 and Path(account['home']).is_absolute():
         return {'name':user,'uid':account['uid'],'home':str(account['home'])}
@@ -402,7 +557,9 @@ def apply_terminal_shortcuts(store,host,target,layout,*,preview=False):
                 store.data['terminal_shortcuts'].pop(target['name'])
                 store.save()
             return 'DEFERRED: LXTerminal selection changed before applying the plan.'
-    return f"Managed FI/SE LXTerminal zoom shortcuts for {target['name']}."
+    return (f"Managed FI/SE LXTerminal zoom shortcuts for {target['name']}. "
+            "Open a separate window with lxterminal --no-remote to load them now. "
+            "Normal windows may reuse the running LXTerminal process until the next desktop login.")
 
 
 def terminal_restoration(store,host):
@@ -414,6 +571,12 @@ def terminal_restoration(store,host):
     if entry and all(entry.get(k)==value for k,value in target.items()):
         return target
     raise ValueError('Run LXTerminal restoration as the recorded desktop user through sudo.')
+
+
+def installed_desktop_target(store,host):
+    state=host.snapshot()
+    user=store.data.get('primary') if store.data.get('profile')=='AALTO' else None
+    return terminal_target(state,user)
 
 
 def share_definitions(prefix):
@@ -433,20 +596,36 @@ def app_record(name):
 
 
 def save_selection(store, a, plan, state):
-    preferences={key:getattr(a,key) for key in (*plan['components'],'ssh','ntp_server','kernel_4k')
+    preferences={key:getattr(a,key) for key in (*plan['components'],'ssh','ntp_server','kernel_4k','keyboard_layout')
                  if getattr(a,key) is not None}
     store.data.update(profile=plan['profile'], selected=plan['components'], preferences=preferences,
                       lab_prefix=str(a.lab_prefix), ide_prefix=str(a.ide_prefix) if a.ide_prefix else None,
                       share_prefix=str(plan['share_prefix']), ntp=plan['ntp'], ssh_policy=plan['ssh'], primary=plan['primary'],
-                      additional=plan['additional'], share_owners=plan['owners'],
+                      additional=plan['additional'], share_owners=plan['owners'], hostname=plan['hostname'],
+                      chromium_policy=plan['chromium_policy'],
+                      share_later=a.share_later,
+                      pending_install=True, pending_update_existing=a.update_existing,
                       accounts={user: user in state['accounts'] for user in [plan['primary'],*plan['additional']]})
+    if plan['hostname'] != state['hostname']:
+        store.data['pending_hostname'] = dict(name=plan['hostname'], previous=state['hostname'])
+    elif not plan.get('continue_hostname'):
+        store.data.pop('pending_hostname', None)
     if plan.get('wlan_country'):
         store.data['pending_wlan'] = dict(country=plan['wlan_country'],previous=plan['previous_wlan_country'])
     if plan.get('config_path'):
         store.data['pending_share'] = dict(path=str(plan['config_path']), kind=plan['config_kind'],
-                                           default_group=a.default_group)
+                                           default_group=a.default_group, replace=a.replace_share_config,
+                                           digest=plan['config_digest'])
     else:
         store.data.pop('pending_share',None)
+    if plan.get('imaging_selection'):
+        store.data['pending_imaging'] = plan['imaging_selection']
+    else:
+        store.data.pop('pending_imaging', None)
+    if plan.get('wolfram_reviewed'):
+        store.data['pending_wolfram'] = vars(plan['wolfram_reviewed'])
+    else:
+        store.data.pop('pending_wolfram', None)
     store.save()
 
 
@@ -463,21 +642,27 @@ def track_stage(store, host, stage, a, plan, state):
             if apt_stage:
                 try:
                     store.data['apt_current']=apt_inventory(host)
+                    if stage=='wolfram':
+                        remember_wolfram_install(store, packages)
                 except Exception as inventory_error:
                     error.add_note(f'Could not refresh the APT inventory: {inventory_error}')
             raise
         if apt_stage:
             store.data['apt_current']=apt_inventory(host)
         if stage=='wolfram':
-            learned=store.data['apt_current'].get('wolfram-engine')
-            if learned and 'wolfram-engine' not in packages and 'wolfram-engine' not in store.data['apt_original']:
-                store.data['wolfram_owned']=learned
-        if stage=='imaging' and a.imaging_source and a.imaging_approved and a.imaging_app and (a.imaging_source/'scripts/install/01-install.sh').is_file():
-            store.data['imaging']={'source':str(a.imaging_source.resolve()),'apps':list(a.imaging_app),
-                                   'tool_hashes':imaging_tool_hashes(a.imaging_source)}
+            remember_wolfram_install(store, packages)
+        if stage=='imaging' and store.data['components'][stage]['status']!='deferred':
+            if approved:=store.data.pop('pending_imaging',None):
+                store.data['imaging']=approved
         if stage in ('conda','lab314','hardware','spyder-ide'):
             record=store.data['components'][stage]
             record['versions']=environment_versions(store.path(targets[0][0])) if targets else {}
+
+
+def remember_wolfram_install(store, previous):
+    learned=store.data['apt_current'].get(wolfram.PACKAGE)
+    if learned and wolfram.PACKAGE not in previous and wolfram.PACKAGE not in store.data['apt_original']:
+        store.data['wolfram_owned']=learned
 
 
 def environment_versions(prefix):
@@ -494,10 +679,9 @@ def environment_versions(prefix):
 
 
 def imaging_tool_hashes(source):
-    import hashlib
     return {path.name:hashlib.sha256(path.read_bytes()).hexdigest()
             for path in sorted((source/'scripts/install').iterdir())
-            if path.is_file() and path.suffix in ('.sh','.py')}
+            if path.is_file() and (path.suffix in ('.sh','.py') or path.name == 'app-catalog.json')}
 
 
 def status(store, host):
@@ -506,6 +690,8 @@ def status(store, host):
     keyboard=preboot.active_layout()
     print('Raspberry Pi Scientific Environment')
     print(f"Profile: {data.get('profile') or 'Unknown'}")
+    if data.get('profile'):
+        print('Chromium policy:', chromium_description(selected_chromium(data)))
     print('Full OS upgrade:',os_upgrade.description(data))
     print(f"Keyboard: {keyboard or data.get('keyboard') or 'Unknown'} (preserved by reset)")
     print('I²C device:', 'present' if (preboot.DEV/'i2c-1').is_char_device() else 'missing')
@@ -513,7 +699,7 @@ def status(store, host):
     if not store.data:
         print(UNKNOWN)
     current_services=services(host)
-    print(f"SSH: {current_services['ssh_enabled'] or 'unknown'} / {current_services['ssh_active'] or 'unknown'}")
+    report_ssh(data.get('ssh_policy','unknown'), ssh_status(host))
     print(f"NTP: {current_services['ntp'] or 'unknown'}")
     ntp_file=store.path(NTP_FILE)
     if ntp_file.is_file() and not ntp_file.is_symlink():
@@ -545,6 +731,13 @@ def status(store, host):
         elif name=='terminal-shortcuts':
             users=', '.join(sorted(data.get('terminal_shortcuts',{})))
             text=f'Tracked for {users}' if users else 'Not installed'
+        elif name=='locales':
+            text=', '.join(data.get('locales', ())) or 'No installer record'
+        elif name=='chromium':
+            if selected_chromium(data)=='shared':
+                text='Configured' if all(store.inspect(name_)!=ABSENT for _,name_ in CHROMIUM_FILES) else 'Missing definitions'
+            else:
+                text='Personal defaults'
         elif name=='imaging':
             text=('Tracked integration' if records and any(store.inspect(n)!=ABSENT for n,_ in records)
                   else 'Unknown ownership' if host.exists('/opt/sci/lib/.sci-apps-v1') else 'Not selected')
@@ -593,7 +786,7 @@ def component_for(path, entry):
     stage=entry['component']
     if path=='/usr/local/bin/envrun':
         return 'envrun'
-    return {'shell':'activation','spyder-desktop':'spyder'}.get(stage,stage)
+    return {'shell':'activation','spyder-desktop':'spyder','wolfram-launchers':'wolfram'}.get(stage,stage)
 
 
 @contextmanager
@@ -625,18 +818,34 @@ def verify(store, host, component=None):
         'wolfram':['dpkg-query','-W','wolfram-engine'],
     }
     failed=False
+    if component=='locales' or (not component and data.get('locales')):
+        try:
+            failed=not locale_setup.verify(host,store)
+        except (OSError,ValueError,subprocess.SubprocessError) as error:
+            print('LIMITED locales:',error)
+            failed=True
+        if component=='locales':
+            return int(failed)
     wlan_country=data.get('pending_wlan',{}).get('country') or data.get('wlan_country')
     if component=='wlan' or (not component and wlan_country):
         try:
             state=wlan.read_state(host)
             detail=wlan.verify(state,wlan_country or wlan.existing_country(state) or 'FI',data)
             print(detail)
-            failed=detail.startswith('DEFERRED')
+            failed |= detail.startswith('DEFERRED')
         except (ValueError,OSError) as exc:
             print('FAIL WLAN:',exc)
             failed=True
         if component=='wlan':
             return int(failed)
+    if component=='chromium' or (not component and data.get('profile')):
+        try:
+            message=chromium_policy(store)
+            print(message)
+            failed |= message.startswith('DEFERRED')
+        except (OSError, ValueError) as error:
+            print(f'FAIL Chromium: {error}')
+            failed=True
     with inspection(host):
         for name,command in commands.items():
             if component and name!=component:
@@ -657,6 +866,8 @@ def verify(store, host, component=None):
                 result=host.run(command,capture=True)
                 if result.stdout:
                     print(result.stdout.strip())
+                if name=='wolfram':
+                    wolfram.verify(host, store)
             except (ValueError,OSError,subprocess.SubprocessError) as error:
                 print(f'FAIL {LABELS[name]}: {error}')
                 failed=True
@@ -665,6 +876,8 @@ def verify(store, host, component=None):
                 if name=='spyder':
                     spyder_pending()
         if component in (None,'profile'):
+            report_ssh(data.get('ssh_policy','unknown'), ssh_status(host))
+            print('Hostname (running):', platform.node() or 'unknown')
             drift=[name for name,entry in data.get('paths',{}).items()
                    if component_for(name, entry) in ('profile','preboot','system','accounts')
                    and (entry.get('conflict') or store.inspect(name,entry['tree'])!=entry.get('installed'))]
@@ -1172,6 +1385,15 @@ def software_action(store,host,verb,component,packages,preview,approved_plan=Non
         raise ValueError('Package names apply to Scientific Python, Spyder or hardware Python.')
     if any(not PACKAGE.fullmatch(package) for package in packages):
         raise ValueError('Use an installed package name without shell or version expressions.')
+    if component=='locales':
+        if preview:
+            proposal=locale_setup.plan(host,store)
+            locale_setup.describe(proposal)
+            if not (proposal.enable or proposal.generate):
+                print('No locale generation changes planned.')
+            return proposal
+        print(apply_locales(store,host,approved_plan))
+        return
     if component=='wlan':
         if verb!='repair':
             raise ValueError('Use repair or verify for WLAN')
@@ -1192,12 +1414,30 @@ def software_action(store,host,verb,component,packages,preview,approved_plan=Non
                 store.data.pop('pending_wlan',None)
         return previous,country
     if component=='terminal-shortcuts' and verb=='repair':
-        target=terminal_target(host.snapshot())
+        target=installed_desktop_target(store,host)
         layout=preboot.active_layout()
         if not target or layout not in ('fi','se'):
             print('LXTerminal zoom setup requires the intended desktop user and a Finnish or Swedish layout.')
             return
         print(apply_terminal_shortcuts(store,host,target,layout,preview=preview))
+        return
+    if component=='chromium':
+        mode=selected_chromium(data)
+        if preview:
+            print('Chromium policy:', chromium_description(mode))
+            paths=(chromium_personal_restore(store) if mode=='personal' else
+                   [(path, None) for _,path in CHROMIUM_FILES])
+            for path, _ in paths:
+                print(('  Restore ' if mode=='personal' else '  Reconcile ') + path)
+            return mode
+        else:
+            if approved_plan is not None and mode!=approved_plan:
+                raise ValueError('The saved Chromium policy changed. Review a new maintenance plan.')
+            with store.stage('chromium',[(path,False) for _,path in CHROMIUM_FILES],repair_missing=True):
+                result=chromium_policy(store,mode=mode,apply=True)
+                print(result)
+                if result.startswith('DEFERRED'):
+                    store.data['components']['chromium']['status']='deferred'
         return
     if component in ('lab314','spyder'):
         name=location(data,'lab314')
@@ -1274,13 +1514,30 @@ def software_action(store,host,verb,component,packages,preview,approved_plan=Non
         if not installed:
             raise ValueError('Wolfram Engine is not installed; use the profile installer to add it.')
         print('Current Wolfram Engine:',installed)
-        args=['apt-get','install','--reinstall' if verb=='repair' else '--only-upgrade','wolfram-engine']
-        host.run([*args,'--simulate'] if preview else [*args,'-y'])
-        if not preview:
-            inventory=apt_inventory(host)
-            if data.get('wolfram_owned')==installed:
-                data['wolfram_owned']=inventory.get('wolfram-engine')
-            data['apt_current']=inventory
+        proposed=(wolfram.package_metadata(host, installed) if verb=='repair' else wolfram.candidate(host))
+        if verb=='update' and proposed and proposed.version==installed:
+            proposed=None
+        if preview:
+            args=['--reinstall',f'{wolfram.PACKAGE}={installed}'] if verb=='repair' else ['--only-upgrade',wolfram.PACKAGE]
+            if proposed:
+                wolfram.show_preflight(host, proposed)
+                host.run(['apt-get','--simulate','install',*args])
+                print('Approving the package operation authorizes installation under the displayed Wolfram terms.')
+            print('Review and reconcile the package-provided Wolfram GUI and CLI desktop entries.')
+            return proposed
+        if proposed!=approved_plan:
+            raise ValueError('Wolfram APT metadata changed. Review the new update plan.')
+        if proposed:
+            wolfram.show_preflight(host, proposed, strict=True)
+            action='--reinstall' if verb=='repair' else '--only-upgrade'
+            host.run(['apt-get','install',action,'--no-remove','-y',f'{wolfram.PACKAGE}={proposed.version}'])
+        inventory=apt_inventory(host)
+        if data.get('wolfram_owned')==installed:
+            data['wolfram_owned']=inventory.get('wolfram-engine')
+        data['apt_current']=inventory
+        store.save()
+        reconcile_wolfram_launchers(store, host)
+        wolfram.verify(host, store)
     else:
         raise ValueError('This component is maintained through normal setup or its documented upstream procedure.')
 
@@ -1480,6 +1737,8 @@ def main(argv,host,store=None):
     parser.add_argument('--package', action='append', default=[])
     parser.add_argument('--plan','--dry-run', action='store_true')
     parser.add_argument('--yes', action='store_true', help='approve a planned repair/update')
+    parser.add_argument('--accept-wolfram-license',action='store_true',
+                        help='confirm that you reviewed and are authorized to accept the Wolfram terms')
     parser.add_argument('--expect-plan', metavar='ID', help='require the previously reviewed Update All plan ID')
     parser.add_argument('--confirm', choices=('REMOVE','RESET','QUARANTINE'), help='explicit noninteractive approval for a destructive action')
     args=parser.parse_args(argv)
@@ -1509,6 +1768,9 @@ def main(argv,host,store=None):
         parser.error('--wlan-country requires WLAN repair and a valid two-letter country')
     if component=='wlan' and action not in ('repair','verify'):
         parser.error('WLAN supports repair and verify')
+    if component=='locales' and action=='remove' and not args.package:
+        print('Preserve /etc/locale.gen and generated system locales for local and SSH sessions.')
+        return 0
     if action=='repair' and component in ('lab314','hardware') and sys.stdin.isatty() and not args.package:
         prompt='Damaged package name (Enter to check the environment): '
         if package:=input(prompt).strip():
@@ -1559,7 +1821,11 @@ def main(argv,host,store=None):
         with store.locked():
             if removal_plan(store,host,scope)!=proposal:
                 raise ValueError('The removal plan changed. Review a new plan before applying.')
-            return apply_removal(store,host,*proposal)
+            result=apply_removal(store,host,*proposal)
+            if scope=='chromium' and not result:
+                store.data['chromium_policy']='personal'
+                store.save()
+            return result
     if action=='remove':
         with inspection(host):
             package_removal(store,host,component,args.package,True)
@@ -1573,6 +1839,8 @@ def main(argv,host,store=None):
         approved_plan=software_action(store,host,action,component,args.package,True,**options)
     if args.plan or not confirm(args):
         return 0
+    if component=='wolfram' and approved_plan and args.yes and not args.accept_wolfram_license:
+        raise ValueError('Wolfram package maintenance with --yes requires --accept-wolfram-license after reviewing the terms.')
     with store.locked():
         if store.data is None:
             raise ValueError(UNKNOWN)

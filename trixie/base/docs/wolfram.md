@@ -1,144 +1,74 @@
-# Wolfram Engine (optional)
+# Optional Wolfram Engine and Mathematica
 
-Wolfram Engine is available for Raspberry Pi OS and can be installed separately when needed.
+The unified installer selects Wolfram on AALTO and offers it as an optional
+component on GENERAL and HOME. Use Customize or `--no-wolfram` to skip it.
 
-It is intentionally **not** included in the base image.
+## Disk space and license
 
-## Why it is optional
+The plan reads the APT candidate's `Size` and `Installed-Size`. The AALTO
+sample package `15.0.1+202608182322` on arm64 required about 2.17 GB to
+download and 5.44 GB after installation. Setup checks the download and unpack
+space on the relevant filesystems. The Raspberry Pi package can report
+`Installed-Size` as fractional KiB. Setup converts it to bytes and rounds up
+when needed. The estimates cover the Wolfram package.
+APT also checks the overall transaction and its dependencies.
 
-Reasons for keeping Wolfram Engine outside the base installation:
+Wolfram's Raspberry Pi bundle terms limit use to personal or educational
+purposes and exclude commercial use. Review the terms and the organization's
+license before adding Wolfram to a shared workstation. Installing the bundle
+signifies acceptance. Interactive setup asks the administrator to approve the
+displayed package. It asks again if refreshed APT metadata identifies a
+different candidate. Noninteractive use of `--yes` also needs the operator's
+explicit `--accept-wolfram-license` for the reviewed Wolfram candidate.
+[Wolfram Raspberry Pi Bundle License Agreement](https://www.wolfram.com/legal/agreements/wolfram-mathematica-raspberry-pi/)
 
-- large disk footprint
-- not ideal for low-memory Raspberry Pi models
-- not needed on most measurement, logging, or control systems
-- licensing considerations make it unsuitable as a default package in a generally shared setup script
+## Desktop and terminal commands
 
-This follows the same design principle as the rest of the base image: keep the default installation as lean, practical, and reproducible as possible.
+| Component | Desktop or terminal entry |
+|---|---|
+| Mathematica notebook interface | **Wolfram Mathematica (GUI)**. The AALTO sample used `mathematica`. |
+| Interactive Wolfram kernel | **Wolfram Language (CLI)**, opens in a terminal. The sample used `wolfram`. |
+| WolframScript | `wolframscript` for noninteractive scripts and command-line evaluation. |
 
-## When it may make sense
+Setup reads the installed package's desktop entries and writes managed overrides
+with the same desktop IDs under `/usr/local/share/applications`. The chosen
+entries keep their vendor icons and an education or science category. Additional
+package entries and separately named Raspberry Pi menu entries that invoke
+the same commands are hidden by ID. If the package supplies a WolframScript
+menu entry, it is hidden and `wolframscript` remains available in the terminal.
+The overrides live outside
+APT's files. After an APT change that introduces new launcher IDs, run the
+installer's update or repair to reconcile them. Local desktop overrides or edits
+are preserved and may require review.
+[Raspberry Pi desktop search path](https://github.com/raspberrypi-ui/raspberrypi-ui-mods/blob/master/usr/bin/setup_env)
 
-Install Wolfram Engine only on systems that specifically need it, for example:
+The installer checks the executables and desktop definitions. On new installs
+it attempts short local CLI and WolframScript calculations and reports the result
+of each. Launch both menu entries as the desktop user for functional acceptance.
+Evaluate `2+2` in the CLI and run this in a Mathematica notebook:
 
-- symbolic mathematics
-- ad hoc technical calculations
-- educational use
-- occasional analytical work where Wolfram tools are useful
+```mathematica
+Plot[Sin[x], {x, 0, 2 Pi}]
+```
 
-## Installation
+Test WolframScript separately with `wolframscript -code '2+2'` if its automatic
+calculation was limited. The expected result is `4`.
 
-Basic usage:
+## Maintenance
+
+Run these from the repository's `trixie/base/install` directory.
 
 ```bash
-./install_optional_wolfram.sh
+bash install_optional_wolfram.sh --dry-run
+sudo bash install_optional_wolfram.sh
+sudo bash setup-rpi.sh --manage --action verify --component wolfram
+sudo bash setup-rpi.sh --manage --action repair --component wolfram --plan
+sudo bash setup-rpi.sh --manage --action update --component wolfram --plan
+sudo bash uninstall_optional_wolfram.sh --dry-run
+sudo bash uninstall_optional_wolfram.sh
 ```
 
-Non-interactive:
-
-```bash
-./install_optional_wolfram.sh --yes
-```
-
-Dry-run:
-
-```bash
-./install_optional_wolfram.sh --dry-run
-```
-
-Verbose mode:
-
-```bash
-./install_optional_wolfram.sh --verbose
-```
-
-Combined example:
-
-```bash
-./install_optional_wolfram.sh --yes --verbose
-```
-
-The install script:
-
-* checks that the system is suitable for Raspberry Pi Wolfram installation
-* prints usage and licensing notes
-* warns about low-memory systems
-* installs `wolfram-engine` with `apt`
-* verifies that `wolframscript` is available
-
-## Removal
-
-Basic usage:
-
-```bash
-./uninstall_optional_wolfram.sh
-```
-
-Non-interactive:
-
-```bash
-./uninstall_optional_wolfram.sh --yes
-```
-
-Dry-run:
-
-```bash
-./uninstall_optional_wolfram.sh --dry-run
-```
-
-Verbose mode:
-
-```bash
-./uninstall_optional_wolfram.sh --verbose
-```
-
-## Verification
-
-After installation, a quick manual test is:
-
-```bash
-wolframscript -code "2+2"
-wolframscript -code "Prime[1000]"
-```
-
-Expected example output:
-
-```text
-4
-7919
-```
-
-Run these checks as the intended desktop user. Test the desktop application
-separately if the package provides it. A practical graphics check is evaluating
-`Plot[Sin[x], {x, 0, 2 Pi}]` in a notebook and checking that a curve appears.
-Package availability, command-line evaluation and notebook operation are
-separate outcomes.
-
-The unified installer selects Wolfram by default under AALTO. GENERAL and HOME
-allow users to opt in. Selecting NO preserves any Wolfram installation already
-on the system. For a package installed and recorded by setup, review managed
-removal through `sudo bash setup-rpi.sh --manage --action remove --component wolfram --plan`.
-
-## Notes about memory and storage
-
-Wolfram Engine is relatively heavy compared with the typical software needed for data logging, instrument control, or lightweight analysis.
-
-It may be a poor fit for Raspberry Pi systems with limited RAM, especially 1 GB models.
-
-It also uses a significant amount of disk space, so it should only be installed on systems that actually need it.
-
-## Notes about network speed
-
-Installation speed depends heavily on network speed, because Wolfram Engine is a large package.
-
-In practice, installation may be much faster on a 1000/1000 Mbps wired network than on a 100/10 Mbps connection.
-
-This is one more reason why Wolfram Engine is kept outside the base image and installed only when explicitly needed.
-
-## Licensing note
-
-The Raspberry Pi Wolfram offering may include usage restrictions, including restrictions related to commercial use.
-
-Users are responsible for ensuring that their installation and use comply with the applicable Wolfram and Raspberry Pi licensing terms.
-Record any activation prompt as an authorization limitation. The staging ZIP
-contains the installer only. The optional software is downloaded from the
-configured Raspberry Pi OS repository.
-[Wolfram's Raspberry Pi licensing information](https://support.wolfram.com/373/)
+Apply a reviewed repair or update by omitting `--plan`. The removal command
+uses the unified journal to restore installer-owned desktop overrides and remove
+the APT package when its installer ownership and current version are known.
+It preserves notebooks, user configuration and local desktop files.

@@ -183,7 +183,7 @@ def locale_alias_available(name):
         locale.setlocale(locale.LC_CTYPE, previous)
 
 
-def locale_environment(environ, *, generate=False):
+def locale_environment(environ, *, generate=False, warn=True):
     """Honor installed regional settings and generate only host-selected locales."""
     env = dict(environ)
     clean = dict(env, LC_ALL='C')
@@ -195,7 +195,10 @@ def locale_environment(environ, *, generate=False):
         listing = subprocess.check_output(['/usr/bin/locale', '-a'], env=clean, text=True)
         return {normalized(value) for value in listing.splitlines()}
 
-    installed = inventory()
+    try:
+        installed = inventory()
+    except (OSError, subprocess.SubprocessError):
+        installed = {'c', 'posix'}
     requested = {key: value for key, value in env.items()
                  if key in LOCALE_KEYS and value}
     for value in set(requested.values()):
@@ -206,11 +209,16 @@ def locale_environment(environ, *, generate=False):
         enabled = {normalized(fields[0]) for line in LOCALE_GEN.read_text().splitlines()
                    if (fields := line.partition('#')[0].split())}
         if missing & enabled:
-            subprocess.run(['/usr/sbin/locale-gen', '--keep-existing'], check=True, env=clean)
-            installed.update(inventory())
+            try:
+                subprocess.run(['/usr/sbin/locale-gen', '--keep-existing'], check=True, env=clean)
+                installed.update(inventory())
+            except (OSError, subprocess.SubprocessError) as exc:
+                if warn:
+                    print(f'Locale generation unavailable: {exc}', file=sys.stderr)
     for key, value in requested.items():
         if normalized(value) not in installed:
-            print(f'{key}={value!r} unavailable on this host; using the local fallback for setup.', file=sys.stderr)
+            if warn:
+                print(f'{key}={value!r} unavailable on this host; using the local fallback for setup.', file=sys.stderr)
             del env[key]
     if not env.get('LANG'):
         env['LANG'] = 'C.UTF-8' if 'c.utf8' in installed else 'C'

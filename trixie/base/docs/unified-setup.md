@@ -6,7 +6,8 @@ Pi OS Trixie Full 64-bit and the machine has booted. Profile installation
 supports Raspberry Pi 4 and 5. Preboot supports Raspberry Pi 5 Model B. Imager
 normally sets the hostname, first user/password, network, optional SSH, locale
 and timezone.
-Setup preserves that first account and hostname unless explicitly instructed.
+Setup preserves the Imager account policy and offers the current hostname as
+the default in the interactive hostname prompt before plan approval.
 It never installs an OS, formats storage or automatically removes an account.
 
 Run setup from the intended desktop account. Use the same command to resume
@@ -51,10 +52,13 @@ records its result in the installation journal. An interrupted first upgrade
 is resumed when the same setup command is run again.
 
 If hardware, kernel or firmware changes require a reboot, setup can combine
-them in one reboot after the upgrade. It saves the approved profile and pauses
+them in one reboot after the upgrade. It saves the approved profile, hostname,
+WLAN country and component choices before the early setup, then pauses
 before installing scientific software. Answer `y` to reboot from setup, or reboot manually
 with `sudo reboot`. Then run the same `sudo bash setup-rpi.sh` command again.
 The installer verifies the running kernel, page size and live I²C and SPI devices.
+An approved WLAN country that matches the stored and active settings is reused
+automatically. Changed settings or package selections can require review again.
 If the boot settings are correct and nodes still fail to appear,
 setup reports the problem for investigation. A reboot flag lives in `/run`
 for the current boot. Startup runs the regular system services only.
@@ -177,13 +181,32 @@ rpi-keyboard fi
 
 The keyboard layout controls key mapping. The interface language comes from
 the language settings, and individual locale categories control regional
-formatting. Over SSH, an unavailable forwarded category such as `LC_TIME`
-falls back to the target's usable settings for installer commands. Check
-`locale -a` on the Pi for the generated locales. When applying a keyboard
-change as root, the utility can generate a missing requested locale already
-enabled in `/etc/locale.gen` with `locale-gen --keep-existing`. To select a new
-regional preference deliberately, use `sudo dpkg-reconfigure locales` and
-choose the desired default interface language separately.
+formatting.
+
+### Regional locales and SSH
+
+GENERAL, HOME and AALTO check `/etc/locale.gen` and `locale -a` in the
+installation plan. After approval, setup enables and generates missing
+locales before preboot. The baseline covers UK English, Finnish, Swedish
+for Finland and Swedish for Sweden. Setup also considers the system's
+configured locale categories and Debian-supported values forwarded by SSH.
+It adds only missing selections and uses `locale-gen --keep-existing`.
+The system's language and numeric defaults stay in place. Invalid or
+unavailable requests use the local fallback for installer commands, and
+setup reports any outstanding locale issue. [Debian locale-gen manual](https://manpages.debian.org/trixie/locales/locale-gen.8.en.html)
+
+Use the following from the corrected checkout to repair an installed system.
+The update action for the `locales` component uses the same reconciliation.
+Remove and Reset retain generated locales and `/etc/locale.gen` for other
+sessions and applications.
+
+```bash
+sudo bash setup-rpi.sh --manage --action repair --component locales --plan
+sudo bash setup-rpi.sh --manage --action repair --component locales
+sudo bash setup-rpi.sh --manage --action verify --component locales
+```
+
+[Repair locales and Wolfram on the existing tr3 R2 installation](a09-locale-repair.md).
 
 ### WLAN country and Ethernet
 
@@ -227,14 +250,18 @@ Choose the profile for your deployment when running setup.
 | HOME | Home environment with its predefined settings |
 | AALTO | Aalto University CHEM environment with its predefined settings |
 
-An explicitly changed hostname also updates an existing matching `127.0.1.1`
-alias in `/etc/hosts`; unrelated entries and aliases are preserved.
+Press Enter at **Hostname** to keep the current value. A new name must be a
+single DNS label of 1–63 ASCII letters, digits or hyphens, starting and ending
+with a letter or digit. The approved change sets the static hostname and
+updates or adds its local `127.0.1.1` alias in `/etc/hosts`.
+`--hostname NAME --plan` shows an explicit choice without applying it.
 
-Normally, choose a profile and approve the plan. The installer derives account,
+Normally, choose a profile and hostname and approve the plan. The installer derives account,
 SSH, NTP and software defaults from the profile and asks when needed for account
 recovery. Enter `customize` at the approval prompt to change settings and review
 the revised plan. Passwords are entered only through
 the operating system's interactive `passwd` program for newly created accounts.
+The account role and username appear immediately before each password prompt.
 Existing passwords are retained. `--yes` approves the installation plan; it does
 not bypass password input or authorize a reboot or account removal.
 
@@ -242,7 +269,8 @@ not bypass password input or authorize a reboot or account removal.
 
 `--plan` and `--dry-run` preview the profile and, on Raspberry Pi 5 Model B,
 preboot settings without changing the system. On a terminal the preview offers
-the same profile prompts as setup. Outside a terminal the default preview uses
+the profile menu and uses the current or explicitly supplied hostname.
+Outside a terminal the default preview uses
 GENERAL. On development hosts the profile preview identifies the Pi 5 preboot
 stage and omits firmware inspection.
 
@@ -256,7 +284,7 @@ sudo bash setup-rpi.sh --preboot
 # Public installation, retaining the invoking Imager account:
 sudo bash setup-rpi.sh --profile GENERAL
 
-# HOME: primary NTP time.mikes.fi, existing HOME SSH-enable default:
+# HOME: primary NTP time.mikes.fi, keep the current SSH settings:
 sudo bash setup-rpi.sh --profile HOME --hardware --share-later
 
 # Existing AALTO/CHEM deployment defaults:
@@ -279,7 +307,7 @@ unrelated account's home directory. A mismatched `SUDO_UID` is rejected.
 | Profile | Primary account | Additional accounts | NTP | SSH default | Wolfram | rpi-share |
 |---|---|---|---|---|---|---|
 | GENERAL | Imager/invoking user | none | public pool / Cloudflare | keep | optional | optional |
-| HOME | Imager/invoking user | none | time.mikes.fi | enable, as in existing HOME provisioning | optional | included |
+| HOME | Imager/invoking user | none | time.mikes.fi | keep | optional | included |
 | AALTO (CHEM deployment) | Preconfigured primary account, configurable | Dedicated maintenance account, configurable | ntp.aalto.fi | keep | selected, deselectable | included |
 
 AALTO always selects the existing CHEM-specific account policy, independently of
@@ -300,8 +328,12 @@ The approved primary/invoking administrator's `NOPASSWD: ALL` policy is retained
 It is also provided to an explicitly recovered primary administrator. Shared
 `account-policy.sh` validates sudoers before publishing the existing policy form.
 Existing global/group sudo policies are not redesigned. No unrelated accounts
-receive privileges silently. `--ssh keep|enable|disable` is explicit; disabling
-SSH may disconnect remote administration and is shown in the plan.
+receive privileges silently. All three profiles default to keeping the current
+SSH settings. To change `ssh.service`, use Customize or `--ssh enable|disable`
+and approve the plan. The plan, summary and `--manage --action verify` report
+the policy, current service state and startup policy separately. They also
+show `ssh.socket`, which can accept connections while the service is inactive.
+The service policy preserves the socket settings.
 
 ## Username typo recovery
 
@@ -408,12 +440,42 @@ viewer. [Plotly renderer documentation](https://plotly.com/python/renderers/#bro
 Each window uses a private profile in the session's temporary storage in
 RAM. Closing the browser removes the profile and its data. If a forced stop
 prevents cleanup, the runtime directory is cleared after the last logout or
-at reboot. Keep using your usual browser for sign-ins
-and bookmarks. Existing browser profiles keep their own settings and password
-protection. Programs that select their own browser or use an embedded viewer
+at reboot. On GENERAL and HOME, use the regular browser for sign-ins and
+bookmarks. Programs that select their own browser or use an embedded viewer
 still follow their own settings. The installer preserves explicit
 `PLOTLY_RENDERER` and `BROWSER` settings, and Python sessions without a
 graphical display keep their existing defaults.
+
+### Chromium policy
+
+All three profiles offer `personal` and `shared` in Customize and through
+`--chromium-policy personal|shared`. AALTO defaults to `shared`. GENERAL and
+HOME default to `personal`, which uses Chromium's regular profiles and keyring.
+The installer reports the choice before approval and in the summary, and
+saves it for reboot, reruns and maintenance.
+
+With `shared`, the Chromium menu entry and terminal command use the Raspberry
+Pi OS package launcher and its local hook. Chromium opens the regular browser
+profile. Browser settings and bookmarks persist across relaunches. The managed
+policy disables saving new browser passwords. The launcher sets
+`--password-store=basic` to avoid desktop keyring prompts.
+
+The basic backend provides no keyring-backed protection for Chromium's local
+authentication data. A profile switching backends may require signing in to
+websites again. Profile files, keyring files and the Chromium sandbox remain
+in place. The shared policy applies to all local Chromium users on that workstation. Choosing
+`personal` again restores the installer-owned overrides and preserves
+locally modified definitions for review. Plotly and the lab314 browser hook continue to
+use their separate Firefox windows.
+
+The two files are outside APT package ownership. Use
+`--manage --action verify --component chromium` to check the package launcher,
+menu path and policy definitions in shared mode, or to verify a return to the
+personal policy. Repair and Update All follow the saved choice. For an R2
+installation, preview `--manage --action repair --component chromium --plan`,
+apply it by omitting `--plan`, then fully exit Chromium and relaunch. Check
+the menu and terminal launches, regular profile and password-saving policy
+at `chrome://policy`. [Raspberry Pi Chromium launcher](https://github.com/RPi-Distro/chromium/blob/pios/trixie/debian/scripts/chromium) · [Chromium Linux password storage](https://chromium.googlesource.com/chromium/src/+/HEAD/docs/linux/password_storage.md) · [Password-saving policy](https://chromeenterprise.google/policies/password-manager-enabled/)
 
 ### Reruns and maintenance
 
@@ -432,11 +494,11 @@ and leaves the dependency maintenance to `--manage`. Package operations can
 leave an incomplete stage on error. Review the log and rerun after correcting
 the cause. The summary reports updated or preserved files and any reboot needed.
 
-Wolfram is selected by default for AALTO and optional otherwise. Existing
-Engine/`wolframscript` installations are kept. A missing package candidate is
-reported as unavailable. Installation reuses `install_optional_wolfram.sh`.
-An installed Engine or successful CLI check is not a graphical Mathematica/Wolfram
-acceptance result. See [Wolfram licensing and component details](wolfram.md).
+Wolfram is selected by default for AALTO and optional otherwise. Setup reports
+the license and APT disk requirements before approval and checks them again
+before installing. Existing packages are kept while their desktop entries are
+reconciled. The installer reports executable and launcher checks separately
+from the pending desktop test. [Wolfram licensing and component details](wolfram.md)
 
 ## Share configuration and ownership
 
@@ -485,7 +547,8 @@ accounts. New files are mode 0600. Existing configurations are kept unless
 preserves the selected source itself. Software-only updates never overwrite
 catalogs. Symlinked configuration destinations are refused. If installation
 pauses for a reboot, keep the selected source available at the same path.
-Repeat `--replace-share-config` on resumption if you still want replacement.
+Setup retains the approved selection and replacement option when the catalog
+contents still match the approved plan. Changed contents require a new review.
 
 Keep production catalogs outside public Git repositories. The repository
 ignores the three production filenames and excludes them from Git source
@@ -515,6 +578,15 @@ application installation. Application updates, diagnostics and removal continue
 through Scientific Imaging's own `03-update.sh`, `02-diagnose.sh` and
 `04-remove.sh`. `rpi-images` owns OS/accounts/APT/environments/hardware/share setup;
 Scientific Imaging owns application and native application lifecycles.
+Keep the reviewed checkout unchanged across the installer's reboot. The
+installer rechecks the application selection, lifecycle scripts and catalog
+before resuming. The AALTO sample exercised Picamera2 and the HQ Camera IMX477.
+The release acceptance scope covers CSI camera detection, preview, a still
+image and basic controls and ROI using the separate Scientific Imaging checkout.
+
+USB camera support is included in this release. USB cameras have not been
+tested or validated on Raspberry Pi OS Trixie for this release. Compatibility
+and correct operation on this platform are not guaranteed.
 
 ## Independent installation and maintenance
 
@@ -559,11 +631,14 @@ hardware checks still need a target Pi.
 
 ### LXTerminal zoom shortcuts
 
-With the `fi` or `se` keyboard layout, setup configures the invoking desktop
-user's selected LXTerminal. Ctrl + + zooms in, Ctrl + − zooms out, and Ctrl + 0
+With the `fi` or `se` keyboard layout, setup configures the primary AALTO
+desktop account or the invoking desktop user on GENERAL and HOME. Ctrl + +
+zooms in, Ctrl + − zooms out, and Ctrl + 0
 resets zoom. Existing explicit definitions and markers for absent definitions
-are kept in that user's `~/.config/lxterminal/lxterminal.conf`. Open a new
-LXTerminal session to use the updated accelerators.
+are kept in that user's `~/.config/lxterminal/lxterminal.conf`. Open a separate
+window with `lxterminal --no-remote` to load the new bindings immediately.
+Regular windows may reuse the running process until the next desktop login.
+Keep any running terminals open. [LXTerminal Trixie manual](https://manpages.debian.org/trixie/lxterminal/lxterminal.1.en.html)
 An unchanged older installer block is upgraded to Ctrl + 0 while retaining its
 original settings for reset.
 

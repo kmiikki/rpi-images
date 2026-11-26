@@ -3,13 +3,13 @@
 import argparse
 from contextlib import contextmanager, nullcontext
 import fcntl
+from hashlib import sha256
 import importlib.util
 import json
 import os
 from pathlib import Path
 import platform
 import re
-import runpy
 import shlex
 import shutil
 import socket
@@ -23,14 +23,16 @@ import rpi_accounts as accounts
 import installation_profiles as profiles
 import preboot
 import lifecycle
+import locale_setup
 import wlan
+import wolfram
 import os_upgrade
 from diagnostics import Log, redact
 from installation_state import Store
 
 HERE=Path(__file__).resolve().parent
 BASE=HERE.parent
-locale_environment = runpy.run_path(str(BASE/'bin/rpi-keyboard'))['locale_environment']
+locale_environment = locale_setup.keyboard['locale_environment']
 SHARE_NAMES = {'GENERAL': 'rpi-share.json', 'HOME': 'rpi-share.home.json', 'AALTO': 'rpi-share.aalto.json'}
 SHARE_EXAMPLE = 'rpi-share.example.json'
 spec=importlib.util.spec_from_file_location('rpi_catalog',BASE/'bin/rpi_share_catalog.py')
@@ -51,26 +53,36 @@ def canonical(value):
 
 
 def hosts_alias(text,old,new):
-    """Update only the existing local 127.0.1.1 alias, preserving other hosts."""
+    """Update the local hostname without changing aliases for other addresses."""
     output=[]
+    found=False
     for line in text.splitlines(keepends=True):
         content,separator,comment=line.partition('#')
         tokens=content.split()
-        if tokens and tokens[0]=='127.0.1.1' and old in tokens[1:]:
-            content=re.sub(r'(?<!\S)'+re.escape(old)+r'(?!\S)',new,content)
+        if tokens and tokens[0]=='127.0.1.1':
+            prefix, address, aliases = content.partition('127.0.1.1')
+            content=prefix+address+re.sub(r'(?<!\S)'+re.escape(old)+r'(?=\.|\s|$)',new,aliases,flags=re.I)
+            found |= new in content.split()[1:]
             line=content+separator+comment
         output.append(line)
-    return ''.join(output)
+    updated=''.join(output)
+    if not found:
+        updated=updated.rstrip('\n')+f'\n127.0.1.1\t{new}\n' if updated else f'127.0.1.1\t{new}\n'
+    return updated
 
 
 class Host:
     """Narrow host boundary; tests replace it, never run provisioning commands."""
     def __init__(self):
-        self.env=locale_environment(os.environ)
+        self.locale_requests=locale_setup.requests(os.environ)
+        self.env=locale_environment(os.environ,warn=False)
         self.env['PYTHONDONTWRITEBYTECODE']='1'
         self.records=None
         self.log=None
         self.approve_firmware=None
+
+    def refresh_locale_environment(self, *, warn=True):
+        self.env=locale_environment({**self.env, **self.locale_requests},warn=warn)
 
     def run(self, argv, capture=False, **kwargs):
         if self.log:
@@ -79,7 +91,8 @@ class Host:
                               capture_output=capture,text=True,**kwargs)
 
     def probe(self,argv):
-        return subprocess.run([str(x) for x in argv],env=self.env,check=False,capture_output=True,text=True)
+        return subprocess.run([str(x) for x in argv],env=self.env,check=False,capture_output=True,
+                              stdin=subprocess.DEVNULL,text=True)
 
     @contextmanager
     def installation(self, state):
@@ -151,27 +164,44 @@ class Host:
         return any(path for name in ('opencv','py-opencv','spyder')
                    for path in (prefix/'conda-meta').glob(f'{name}-[0-9]*.json'))
 
-    def change_hostname(self,old,new):
+    def change_hostname(self,old,new,previous=None):
         path=Path('/etc/hosts')
-        if path.is_symlink():raise ValueError('symlinked /etc/hosts requires separate review')
-        original=path.read_text();updated=hosts_alias(original,old,new)
+        if path.is_symlink() or Path('/etc/hostname').is_symlink():
+            raise ValueError('symlinked /etc/hosts or /etc/hostname requires separate review')
+        if socket.gethostname()!=old:
+            raise ValueError('Hostname changed since the plan. Review the new setting.')
+        original=path.read_text();updated=hosts_alias(original,previous or old,new)
         if self.records:
             for name in ('/etc/hosts','/etc/hostname'):
                 backup=self.records.snapshot(name,backup=True)
                 if backup['kind']=='file':
                     print(f'Hostname configuration backup: {self.records.directory/"original"/backup["sha256"]}')
         if updated==original:
-            self.run(['hostnamectl','set-hostname',new]);return
+            if new!=old:
+                self.run(['hostnamectl','set-hostname',new])
+            return
         metadata=path.stat();fd,tmp=tempfile.mkstemp(prefix='.rpi-hosts-',dir=path.parent)
         try:
             with os.fdopen(fd,'w') as stream:
                 stream.write(updated);stream.flush();os.fsync(stream.fileno())
             os.chmod(tmp,stat.S_IMODE(metadata.st_mode));os.chown(tmp,metadata.st_uid,metadata.st_gid)
-            self.run(['hostnamectl','set-hostname',new])
+            if new!=old:
+                self.run(['hostnamectl','set-hostname',new])
             try:os.replace(tmp,path)
             except BaseException:
-                self.run(['hostnamectl','set-hostname',old]);raise
+                if new!=old:
+                    self.run(['hostnamectl','set-hostname',old])
+                raise
         finally:Path(tmp).unlink(missing_ok=True)
+
+    def verify_hostname(self, name, changed):
+        static=self.run(['hostnamectl','--static'],capture=True).stdout.strip()
+        if (changed and static!=name) or socket.gethostname()!=name:
+            raise ValueError(f'Hostname readback: selected={name}, static={static}, running={socket.gethostname()}')
+        if changed and not any(line.split()[:1]==['127.0.1.1'] and name in line.split()[1:]
+                               for line in (entry.partition('#')[0] for entry in Path('/etc/hosts').read_text().splitlines())):
+            raise ValueError('Selected hostname is missing from the local /etc/hosts mapping')
+        print(f'VERIFY PASS hostname: {name} (static: {static or "unset"})')
 
     def exists(self,path):return Path(path).exists() or Path(path).is_symlink()
     def environment(self,prefix):
@@ -213,10 +243,6 @@ class Host:
         mem=re.search(r'^MemTotal:\s+(\d+)',Path('/proc/meminfo').read_text(),re.M)
         local=accounts.local_accounts()
         invoking=accounts.invoking_user(local)
-        ssh={}
-        for query in ('is-active','is-enabled'):
-            try:ssh[query]=self.run(['systemctl',query,'ssh'],capture=True).stdout.strip()
-            except (OSError,subprocess.SubprocessError):ssh[query]='inactive, unavailable or unknown'
         try:
             package=self.probe(['dpkg-query','-W','-f=${Status}','wolfram-engine'])
             wolfram=dict(engine_installed=package.returncode==0 and 'install ok installed' in package.stdout,cli=shutil.which('wolframscript'))
@@ -229,7 +255,7 @@ class Host:
                     os=os_release.get('PRETTY_NAME','unknown'),codename=os_release.get('VERSION_CODENAME'),
                     os_id=os_release.get('ID'),architecture=platform.machine(),hostname=socket.gethostname(),
                     invoking_user=invoking,accounts={n:a for n,a in local.items() if a['uid']>=accounts.uid_min() and n!='nobody'},
-                    ssh=ssh,sudo=sudo,wolfram=wolfram,
+                    ssh=lifecycle.ssh_status(self),sudo=sudo,wolfram=wolfram,
                     existing={p:self.exists(p) for p in ('/opt/conda','/opt/lab314','/opt/rpi','/usr/local/bin/rpi-share',
                         '/usr/local/bin/envrun','/etc/profile.d/sci-path.sh',lifecycle.NTP_FILE,
                         '/usr/local/share/applications/rpi-lab314-spyder.desktop')})
@@ -249,6 +275,8 @@ def parser():
     p.add_argument('--recovery',choices=['create','keep','cancel'],help='explicit choice when the intended primary account is missing')
     p.add_argument('--hostname',type=hostname)
     p.add_argument('--ssh',choices=['keep','enable','disable'])
+    p.add_argument('--chromium-policy',choices=('personal','shared'),
+                   help='choose personal Chromium or regular browsing without a desktop keyring')
     for name in ('system','conda','lab314','spyder','hardware','wolfram','share','imaging'):
         p.add_argument('--'+name,action=argparse.BooleanOptionalAction,default=None)
     p.add_argument('--lab-prefix',type=canonical)
@@ -270,6 +298,8 @@ def parser():
     p.add_argument('--default-group')
     p.add_argument('--imaging-source',type=Path);p.add_argument('--imaging-app',action='append',default=[])
     p.add_argument('--imaging-approved',action='store_true',help='administrator confirms selected local Scientific Imaging source has been reviewed')
+    p.add_argument('--accept-wolfram-license',action='store_true',
+                   help='confirm that you reviewed and are authorized to accept the Wolfram terms')
     p.add_argument('--plan','--dry-run',action='store_true')
     p.add_argument('--yes',action='store_true',help='approve the displayed installation plan; new passwords still require a terminal')
     return p
@@ -278,6 +308,15 @@ def parser():
 def ask(prompt, default):
     answer=input(prompt+' ['+str(default)+']: ').strip()
     return answer or default
+
+
+def ask_hostname(current, default):
+    while True:
+        selected=ask('Hostname',default)
+        try:
+            return current if selected==current else hostname(selected)
+        except ValueError as exc:
+            print(exc)
 
 
 def share_source_selected(a):
@@ -365,7 +404,8 @@ def load_share_catalog(a, discovered):
     label = ('bundled public example (edit before use)' if public else
              'external CSV' if a.share_csv else 'external production JSON')
     return dict(config=config, config_source=f'{label}: {path}', config_path=path,
-                config_kind='csv' if a.share_csv else 'json')
+                config_kind='csv' if a.share_csv else 'json',
+                config_digest=sha256(json.dumps(config, sort_keys=True).encode()).hexdigest())
 
 
 def interactive(a, state):
@@ -375,7 +415,7 @@ def interactive(a, state):
     if a.profile not in ('GENERAL','HOME','AALTO'):raise ValueError('unknown profile')
 
 
-def customize(a, state):
+def customize(a, state, country=None):
     if a.profile=='AALTO':
         policy=accounts.aalto_account_plan(a.primary_user,a.additional_user,a.school,a.no_additional_users)
         a.school='CHEM'
@@ -384,9 +424,21 @@ def customize(a, state):
         primary_default='chem' if a.school=='CHEM' else state['invoking_user'] or ''
         additional_default='chem-it' if a.school=='CHEM' else '-'
     a.primary_user=ask('Primary local account',a.primary_user or primary_default)
-    selected_hostname=ask('Hostname (normally keep Imager value)',a.hostname or state['hostname'])
-    a.hostname=None if selected_hostname==state['hostname'] else hostname(selected_hostname)
-    a.ssh=ask('SSH keep / enable / disable',a.ssh or ('enable' if a.profile=='HOME' else 'keep'))
+    a.hostname=ask_hostname(state['hostname'],a.hostname or state['hostname'])
+    a.ssh=ask('SSH keep / enable / disable',a.ssh or 'keep')
+    chromium_default=lifecycle.selected_chromium(vars(a))
+    while True:
+        chromium=ask('Chromium policy personal / shared',chromium_default).lower()
+        if chromium in ('personal','shared'):
+            a.chromium_policy=chromium
+            break
+        print('Choose personal or shared for Chromium.')
+    if country:
+        while True:
+            country=ask('WLAN regulatory country (two-letter ISO code)',country).upper()
+            if country in wlan.countries():
+                break
+            print('Choose a valid two-letter WLAN country.')
     prompt='Additional sudo-group users (space separated; - means none)'
     if a.profile=='AALTO':prompt='Additional sudo-group users (required maintenance account is retained; - is not allowed)'
     if a.additional_user is not None:additional_default=' '.join(a.additional_user) or '-'
@@ -404,11 +456,17 @@ def customize(a, state):
         if prefix!='-':a.ide_prefix=canonical(prefix)
     prefix=ask('Scientific Python environment path',str(a.lab_prefix or '/opt/lab314'))
     a.lab_prefix=canonical(prefix)
-    if a.imaging and not a.imaging_source:
-        path=ask('Approved local Scientific Imaging source (- defers installation)','-')
+    if a.imaging:
+        path=ask('Approved local Scientific Imaging source (- defers installation)',str(a.imaging_source or '-'))
         if path!='-':
-            a.imaging_source=Path(path);a.imaging_app=input('Application names (space separated): ').split()
+            a.imaging_source=Path(path)
+            a.imaging_app=ask('Application names (space separated)', ' '.join(a.imaging_app)).split()
             a.imaging_approved=ask('Has this application source/scope been reviewed? y/n','n').lower() in ('y','yes')
+        else:
+            a.imaging_source=None
+            a.imaging_app=[]
+            a.imaging_approved=False
+    return country
 
 
 def component_defaults(a):
@@ -429,6 +487,10 @@ def reuse_selection(a,data):
     for name in (*profiles.COMPONENTS,'ssh','ntp_server','kernel_4k'):
         if getattr(a,name) is None and saved.get(name) is not None:
             setattr(a,name,saved[name])
+    if a.chromium_policy is None:
+        a.chromium_policy=lifecycle.selected_chromium(data)
+    if data.get('pending_install') and a.keyboard_layout is None:
+        a.keyboard_layout=saved.get('keyboard_layout')
     if a.primary_user is None:
         a.primary_user=data.get('primary')
     if a.additional_user is None and not a.no_additional_users:
@@ -449,8 +511,11 @@ def reuse_selection(a,data):
             a.share_json = Path(source['path'])
         if a.default_group is None:
             a.default_group = source.get('default_group')
-    if not a.imaging_source and not a.imaging_app and data.get('imaging'):
-        saved_imaging=data['imaging']
+        a.replace_share_config |= bool(source.get('replace'))
+    elif not share_source_selected(a) and data.get('share_later'):
+        a.share_later=True
+    saved_imaging=data.get('pending_imaging') or data.get('imaging')
+    if not a.imaging_source and not a.imaging_app and saved_imaging:
         saved_source=Path(saved_imaging['source'])
         if saved_source.is_absolute():
             a.imaging_source=canonical(saved_source)
@@ -502,8 +567,9 @@ def resolve(a,state,host):
     if a.ide_prefix and any(a.ide_prefix.is_relative_to(p) or p.is_relative_to(a.ide_prefix) for p in (a.lab_prefix,Path('/opt/rpi'),Path('/opt/conda'),Path('/opt/sci'))):
         raise ValueError('Spyder IDE prefix must be separate from application/scientific prefixes')
     if any(a.lab_prefix.is_relative_to(p) or p.is_relative_to(a.lab_prefix) for p in (Path('/opt/rpi'),Path('/opt/conda'),Path('/opt/sci'))):raise ValueError('lab314 prefix overlaps a protected environment')
-    ssh=a.ssh or ('enable' if a.profile=='HOME' else 'keep')
-    hostname(a.hostname or state['hostname'])  # Validate without normalizing an existing identity.
+    ssh=a.ssh or 'keep'
+    if a.hostname and a.hostname!=state['hostname']:
+        hostname(a.hostname)
     hostname_value=a.hostname or state['hostname']
     if (primary not in state['accounts'] or any(u not in state['accounts'] for u in extras)) and not a.plan and not sys.stdin.isatty():
         raise ValueError('new accounts require interactive password input; no changes made')
@@ -522,6 +588,7 @@ def resolve(a,state,host):
         accounts.username(owner)
         if owner not in state['accounts'] and owner not in [primary,*extras]:raise ValueError('catalog owner is not an existing or planned local account')
     return dict(profile=a.profile,school=school,primary=primary,additional=extras,hostname=hostname_value,
+                chromium_policy=lifecycle.selected_chromium(vars(a)),
                 ssh=ssh,ntp=' '.join(a.ntp_server) if a.ntp_server else {'GENERAL':'pool.ntp.org time.cloudflare.com','HOME':'time.mikes.fi','AALTO':'ntp.aalto.fi'}[a.profile],
                 components=components,existing_lab=existing_lab,existing_conda=existing_conda,existing_rpi=existing_rpi,
                 existing_ide=existing_ide,native_lab=existing_lab and host.native_lab314(a.lab_prefix),
@@ -535,8 +602,10 @@ def stages(a,plan):
     c=plan['components'];result=[('accounts','KEEP existing passwords; create only missing approved accounts'),('profile','NTP '+plan['ntp']+'; SSH '+plan['ssh'])]
     if plan.get('wlan_country'):
         result.append(('wlan',f'Enable WLAN in {plan["wlan_country"]}'))
-    if plan.get('desktop_user') and plan.get('keyboard_layout') in ('fi','se'):
+    if plan.get('desktop_account') and plan.get('keyboard_layout') in ('fi','se'):
         result.append(('terminal-shortcuts','Configure FI/SE zoom shortcuts if LXTerminal is the selected terminal'))
+    if plan['chromium_policy']=='shared' or plan.get('chromium_cleanup'):
+        result.append(('chromium',f"Apply Chromium policy: {plan['chromium_policy']}"))
     if c['system']:result.append(('system','ENSURE existing APT dependency lists'))
     if c['conda']:result.append(('conda','KEEP' if plan['existing_conda'] else 'INSTALL Miniforge through existing script'))
     if c['spyder'] and a.ide_prefix:result.append(('spyder-ide','KEEP' if plan['existing_ide'] and not a.update_existing else 'CREATE/UPDATE selected separate IDE'))
@@ -558,7 +627,7 @@ def stages(a,plan):
             result.append(('spyder-desktop','DEFERRED: existing Scientific Python environment has no Spyder; migration is separate'))
     if c['lab314']:result.append(('shell','REUSE existing lab314 shell activation and envrun'))
     if c['hardware']:result.append(('hardware','KEEP' if plan['existing_rpi'] else 'INSTALL optional /opt/rpi through existing script'))
-    if c['wolfram']:result.append(('wolfram','KEEP existing Engine/CLI; GUI acceptance separate' if plan['existing_wolfram'] else 'CHECK APT availability, then existing optional installer'))
+    if c['wolfram']:result.append(('wolfram','KEEP Wolfram Engine; reconcile GUI and CLI launchers' if plan['existing_wolfram'] else 'Install optional APT package and reconcile GUI and CLI launchers'))
     if c['share']:result.append(('share','INSTALL '+str(plan['share_prefix']/'bin/rpi-share')+'; '+plan['config_source']))
     if c['imaging']:result.append(('imaging','DEFER unless approved local source and explicit applications are available'))
     result.append(('verification','VERIFY selected components and report deferred GUI/hardware/network acceptance'))
@@ -648,8 +717,14 @@ def apply(a,plan,state,host):
                     else:
                         accounts.ensure_user(plan['primary'],admin=True,passwordless=True)
                         for user in plan['additional']:accounts.ensure_user(user,admin=True)
-                    if plan['hostname']!=state['hostname']:
-                        host.change_hostname(state['hostname'],plan['hostname']);print('Hostname changed; reconnect using the new name. A reboot may be needed for all services.')
+                    if plan.get('continue_hostname') and plan['hostname']==state['hostname']:
+                        host.change_hostname(state['hostname'],plan['hostname'],plan['continue_hostname']['previous'])
+                    elif plan['hostname']!=state['hostname']:
+                        host.change_hostname(state['hostname'],plan['hostname'])
+                        print('Hostname changed; reconnect using the new name. A reboot may be needed for all services.')
+                    if store and hasattr(host,'verify_hostname'):
+                        host.verify_hostname(plan['hostname'],bool(store.data.get('pending_hostname')))
+                        store.data.pop('pending_hostname',None)
                 elif name=='profile':
                     script='pre_home.sh' if plan['profile']=='HOME' else 'pre_aalto.sh' if plan['profile']=='AALTO' else 'pre_profile.sh'
                     if store:
@@ -659,7 +734,12 @@ def apply(a,plan,state,host):
                 elif name=='wlan':
                     detail=apply_wlan(host,plan,store)
                 elif name=='terminal-shortcuts':
-                    detail=lifecycle.apply_terminal_shortcuts(store,host,plan['desktop_user'],plan['keyboard_layout'])
+                    user=plan['desktop_account']
+                    target=plan.get('desktop_user') or lifecycle.terminal_target(host.snapshot(),user)
+                    detail=(lifecycle.apply_terminal_shortcuts(store,host,target,plan['keyboard_layout']) if target
+                            else f'DEFERRED: desktop account {user} unavailable for LXTerminal configuration.')
+                elif name=='chromium':
+                    detail=lifecycle.chromium_policy(store or Store(),mode=plan['chromium_policy'],apply=True)
                 elif name=='system':
                     if store:
                         lifecycle.reconcile_system(store,host,state['model'])
@@ -721,17 +801,13 @@ def apply(a,plan,state,host):
                     elif store:
                         lifecycle.reconcile_file(store,lifecycle.HARDWARE_BRIDGE,b'/usr/lib/python3/dist-packages\n',0o644)
                 elif name=='wolfram':
-                    if plan['existing_wolfram']:detail='KEEP existing Wolfram; CLI/GUI acceptance separate'
+                    if plan['existing_wolfram'] and not state.get('wolfram',{}).get('engine_installed'):
+                        detail='DEFERRED existing Wolfram outside the APT package; review its desktop entries locally.'
                     else:
-                        if store:
-                            lifecycle.install_missing_apt(host,['wolfram-engine'])
-                            with lifecycle.command_environment(host,RPI_WOLFRAM_APT_READY='1'):
-                                shell('install_optional_wolfram.sh','--yes')
-                        else:
-                            candidate=host.run(['apt-cache','policy','wolfram-engine'],capture=True).stdout
-                            if not re.search(r'Candidate:\s+(?!\(none\))\S+',candidate):raise ValueError('wolfram-engine unavailable in configured APT sources')
-                            shell('install_optional_wolfram.sh','--yes')
-                        detail='Engine/CLI installed; graphical Mathematica/Wolfram NOT VERIFIED'
+                        detail=lifecycle.install_wolfram(
+                            host, store, installed=plan['existing_wolfram'], reviewed=plan.get('wolfram_reviewed'),
+                            confirm=lambda: sys.stdin.isatty() and
+                            ask('Install Wolfram under the license terms shown above? y/N','n').lower() in ('y','yes'))
                 elif name=='share':
                     if store:
                         for source,destination,mode in lifecycle.share_definitions(plan['share_prefix']):
@@ -744,10 +820,11 @@ def apply(a,plan,state,host):
                 elif name=='imaging':
                     source=a.imaging_source
                     missing=[app for app in a.imaging_app if not host.exists(lifecycle.app_record(app))] if store else a.imaging_app
-                    approved=a.imaging_approved
-                    previous=store.data.get('imaging',{}) if store else {}
-                    if source and previous.get('source')==str(source.resolve()) and not approved:
-                        approved=lifecycle.imaging_tool_hashes(source)==previous.get('tool_hashes')
+                    approved=a.imaging_approved and not store
+                    previous=(store.data.get('pending_imaging') or store.data.get('imaging',{})) if store else {}
+                    if source and previous.get('source')==str(source.resolve()) and (source/'scripts/install').is_dir():
+                        approved=(a.imaging_app==previous.get('apps') and
+                                  lifecycle.imaging_tool_hashes(source)==previous.get('tool_hashes'))
                     if a.imaging_app and not missing:
                         results.append((name,'PASS','KEEP selected imaging applications'));continue
                     if not source or not approved or not missing or not (source/'scripts/install/01-install.sh').is_file():
@@ -816,8 +893,16 @@ def apply(a,plan,state,host):
                     print(f'Could not append to diagnostic log: {error}',file=sys.stderr)
             if name in ('accounts','profile','system','conda','spyder-ide','lab314','spyder-kernel','spyder-add','hardware'):core_failed=True
     print('\nINSTALLATION SUMMARY')
-    for key in ('profile','school','hostname','primary','additional','ssh','ntp','config_source'):
+    for key in ('profile','school','primary','additional','ntp','config_source'):
         print(key+': '+str(plan[key]))
+    current=socket.gethostname() if isinstance(host,Host) else host.snapshot()['hostname']
+    print(f"Hostname selected: {plan['hostname']} (running: {current})")
+    if plan.get('locale_summary'):
+        print('Locales:',plan['locale_summary'])
+    print(f"Chromium policy: {lifecycle.chromium_description(plan['chromium_policy'])}")
+    if plan.get('wlan_country'):
+        print(f"WLAN country selected: {plan['wlan_country']}")
+    lifecycle.report_ssh(plan['ssh'],lifecycle.ssh_status(host))
     print('sudo: existing approved NOPASSWD policy preserved; primary admin verified separately')
     for name,status,detail in results:print(status,name,detail)
     if store:
@@ -841,14 +926,18 @@ def apply(a,plan,state,host):
     return 0
 
 
-def show_plan(a, plan, state, boot_status):
+def show_plan(a, plan, state, boot_status, host):
     print('\nINSTALLATION PLAN')
     print(f"profile: {plan['profile']}" + (' (CHEM)' if plan['profile']=='AALTO' else ''))
     print('\nSystem configuration')
+    if proposal:=plan.get('locale_plan'):
+        locale_setup.describe(proposal)
+    if error:=plan.get('locale_error'):
+        print('LIMITED locales:',error)
     if plan.get('keyboard_layout'):
         print(f"  Keyboard layout          {plan['keyboard_layout']}")
-    if plan.get('desktop_user') and plan.get('keyboard_layout') in ('fi','se'):
-        print(f"  LXTerminal zoom          {plan['desktop_user']['name']} (if LXTerminal is selected)")
+    if plan.get('desktop_account') and plan.get('keyboard_layout') in ('fi','se'):
+        print(f"  LXTerminal zoom          {plan['desktop_account']} (if LXTerminal is selected)")
     if boot_status is preboot.BootStatus.READY:
         print('  I²C and SPI              Ready')
     elif boot_status is preboot.BootStatus.REBOOT_REQUIRED:
@@ -865,11 +954,19 @@ def show_plan(a, plan, state, boot_status):
         previous=plan.get('previous_wlan_country')
         change=f' (currently {previous})' if previous and previous!=plan['wlan_country'] else ''
         print('  Ethernet and Wi-Fi       Keep Ethernet; enable WLAN in '+plan['wlan_country']+change)
+        if plan.get('wlan_readback'):
+            print('  WLAN readback            '+plan['wlan_readback'])
     elif a.plan:
         print('  Ethernet and Wi-Fi       Inspect target WLAN country; default to FI if unset')
-    for label, value in (('Hostname',plan['hostname']),('SSH',plan['ssh']),('NTP',plan['ntp']),
+    for label, value in (('Hostname',plan['hostname']),('NTP',plan['ntp']),
                          ('Full OS upgrade',plan.get('os_upgrade_status','First-install stage'))):
         print(f'  {label:<24} {value}')
+    lifecycle.report_ssh(plan['ssh'], state['ssh'], '  ')
+    if plan['ssh']!='keep':
+        print('    The approved policy applies to ssh.service. The current ssh.socket setting is retained.')
+    print(f"  Chromium policy          {lifecycle.chromium_description(plan['chromium_policy'])}")
+    if plan['chromium_policy']=='personal' and plan.get('chromium_cleanup'):
+        print('    Restore any remaining installer-owned Chromium shared overrides.')
     for label, users in (('Primary administrator',[plan['primary']]),('Additional administrator',plan['additional'])):
         for user in users:
             action='keep password' if user in state['accounts'] else 'create, set password interactively'
@@ -888,6 +985,8 @@ def show_plan(a, plan, state, boot_status):
     print('\nOptional components')
     for label, key in (('Wolfram Engine','wolfram'),('Scientific Imaging','imaging'),('rpi-share','share')):
         print(f'  {label:<24} {label_action(key)}')
+    if plan['components']['wolfram'] and not plan['existing_wolfram']:
+        wolfram.show_preflight(host,plan.get('wolfram_candidate'))
     if plan['components']['share']:
         print(f"  Share configuration      {plan['config_source']}; owners: {', '.join(plan['owners'])}")
         for path in plan.get('share_candidates', ()):
@@ -929,16 +1028,21 @@ def main(argv=None,host=None):
 
 def normal_setup(a,state,host,target,firmware):
     boot_status=None
-    layout=a.keyboard_layout
     store=getattr(host,'records',None)
     data=store.data if store else None
     if a.plan and target and isinstance(host,Host) and os.geteuid()==0:
         data=Store().load()
+    saved=(data or {}) if a.profile in (None,(data or {}).get('profile')) else {}
+    established=bool(saved.get('profile'))
     explicit_ssh=a.ssh is not None
-    source_can_change = not share_source_selected(a)
-    reuse_selection(a,data)
+    source_can_change=not share_source_selected(a)
+    explicit_hostname=a.hostname is not None
+    reuse_selection(a,saved)
     if not a.profile and not sys.stdin.isatty() and a.plan:
         a.profile='GENERAL'
+    if saved.get('pending_install') and not a.update_existing:
+        a.update_existing=bool(saved.get('pending_update_existing'))
+    layout=a.keyboard_layout
     if isinstance(host,Host):
         host.approve_firmware=lambda: a.accept_boot_changes or (
             sys.stdin.isatty() and ask('Approve displayed I²C/SPI boot changes? y/N','n').lower() in ('y','yes'))
@@ -950,18 +1054,54 @@ def normal_setup(a,state,host,target,firmware):
         if not a.plan and firmware and status is preboot.BootStatus.DEVICES_MISSING:
             preboot.report_reboot(status)
             return 1
-    country = a.wlan_country
+    if not a.profile and sys.stdin.isatty():
+        interactive(a,state)
+    interactive_review=not a.plan and not a.yes and sys.stdin.isatty()
+    current_name=state['hostname']
+    pending_host=saved.get('pending_hostname',{})
+    continuing_host=(not explicit_hostname and pending_host.get('name') and
+                     current_name in (pending_host.get('previous'),pending_host['name']))
+    hostname_drift=bool(pending_host and not continuing_host and not explicit_hostname)
+    if continuing_host:
+        a.hostname=hostname(pending_host['name'])
+    elif not explicit_hostname and interactive_review and (not established or hostname_drift):
+        a.hostname=ask_hostname(current_name,current_name)
+
+    country=a.wlan_country
     previous = None
+    wlan_state=None
+    approved_country=None
+    wlan_matches=True
     if target and hasattr(host,'wlan_state'):
-        previous = wlan.existing_country(host.wlan_state())
-        pending = (data or {}).get('pending_wlan',{})
-        default = pending.get('country') if pending.get('previous') == previous else None
-        default = default or previous or 'FI'
-        if not country and not a.plan and not a.yes and sys.stdin.isatty():
-            country = ask('WLAN regulatory country (two-letter ISO code)',default).upper()
+        wlan_state=host.wlan_state()
+        previous=wlan.existing_country(wlan_state)
+        pending=saved.get('pending_wlan',{})
+        approved_country=pending.get('country') or saved.get('wlan_country')
+        if approved_country not in wlan.countries():
+            approved_country=None
+        wlan_matches=bool(approved_country and (
+            wlan.ready(wlan_state,approved_country) or
+            (wlan.deferred(wlan_state) and previous in (None,approved_country))))
+        default=approved_country if wlan_matches or pending.get('previous')==previous else None
+        default=default or previous or 'FI'
+        if not country and interactive_review and not wlan_matches:
+            while True:
+                country=ask('WLAN regulatory country (two-letter ISO code)',default).upper()
+                if country in wlan.countries():
+                    break
+                print('Choose a valid two-letter WLAN country.')
         country = country or default
     if country and country not in wlan.countries():
         raise ValueError('Invalid WLAN regulatory country')
+    locale_fields={}
+    if hasattr(host,'locale_requests'):
+        try:
+            locale_store=store or Store()
+            if not store:
+                locale_store.data=data
+            locale_fields['locale_plan']=locale_setup.plan(host,locale_store)
+        except (ValueError,OSError,subprocess.SubprocessError) as exc:
+            locale_fields['locale_error']=str(exc)
     while True:
         try:
             plan=resolve(a,state,host)
@@ -975,44 +1115,91 @@ def normal_setup(a,state,host,target,firmware):
         if candidates and not a.plan and sys.stdin.isatty():
             choose_share_source(a, candidates)
             continue
-        established=bool(data and data.get('profile'))
+        desktop_account=(plan['primary'] if a.profile=='AALTO' else state['invoking_user']) if target else None
         plan.update(preboot=target and firmware, keyboard_layout=layout,
-                    desktop_user=lifecycle.terminal_target(state) if target else None,
+                    desktop_account=desktop_account,
+                    desktop_user=lifecycle.terminal_target(state,desktop_account) if desktop_account else None,
                     reconcile=bool(established or any(state.get('existing',{}).values())) and bool(store),
-                    explicit_ssh=explicit_ssh)
+                    explicit_ssh=explicit_ssh,
+                    continue_hostname=pending_host if continuing_host and plan['hostname']==pending_host['name'] else None)
+        plan['chromium_cleanup']=any(
+            destination in (data or {}).get('paths',{}) for _,destination in lifecycle.CHROMIUM_FILES)
         plan.update(wlan_country=country,previous_wlan_country=previous)
+        plan.update(locale_fields)
+        if wlan_state and country:
+            if wlan.ready(wlan_state,country) or wlan.deferred(wlan_state):
+                plan['wlan_readback']=wlan.verify(wlan_state,country,saved)
+            else:
+                plan['wlan_readback']=(f"boot={wlan_state['stored'] or 'unset'}, global={wlan_state['country'] or 'unknown'}, "
+                                       f"radio={wlan_state['radio'] or 'unknown'}; verification pending")
+        if plan['components']['wolfram'] and not plan['existing_wolfram']:
+            plan['wolfram_candidate']=wolfram.candidate(host)
+        if (plan['components']['imaging'] and a.imaging_source and a.imaging_app
+                and (a.imaging_source/'scripts/install').is_dir()):
+            source=str(a.imaging_source.resolve())
+            hashes=lifecycle.imaging_tool_hashes(a.imaging_source)
+            if hashes:
+                selection=dict(source=source,apps=a.imaging_app,tool_hashes=hashes)
+                if a.imaging_approved or selection==(saved.get('pending_imaging') or saved.get('imaging')):
+                    plan['imaging_selection']=selection
         if target and firmware and isinstance(host,Host):
             plan['kernel_status']=preboot.kernel_status((data or {}).get('pending_kernel_boot'),lifecycle.boot_id())
         if a.plan:
             plan['os_upgrade_status']='Requested' if a.apt_upgrade else 'Automatic for reliably identified first installations'
         elif store:
             plan['os_upgrade_status']=os_upgrade.description(data)
-        show_plan(a,plan,state,boot_status)
+        show_plan(a,plan,state,boot_status,host)
         if a.plan:
             print('PLAN ONLY: no accounts, passwords, packages, host settings, configuration files or environments changed.')
             return 0
         if candidates:
             raise ValueError('Multiple matching Share catalogs require --share-json PATH or --share-later.')
-        if a.yes or (established and getattr(a,'reconcile_without_prompt',False) and plan['config'] is None
-                     and country in (None,previous)):
+        share_unchanged=(plan['config'] is None and not saved.get('pending_share') or
+                         saved.get('pending_install') and plan.get('config_digest') and
+                         plan['config_digest']==saved.get('pending_share',{}).get('digest'))
+        wolfram_unchanged=(not plan.get('wolfram_candidate') or
+                           vars(plan['wolfram_candidate'])==saved.get('pending_wolfram'))
+        if wolfram_unchanged or a.accept_wolfram_license:
+            plan['wolfram_reviewed']=plan.get('wolfram_candidate')
+        if a.yes or (established and getattr(a,'reconcile_without_prompt',False) and share_unchanged
+                     and wolfram_unchanged and not hostname_drift and wlan_matches
+                     and country in (None,approved_country)):
             if established:
                 print('Reconciling saved installation choices with current definitions. Package updates are available in --manage.')
             break
         can_choose_share = plan['components']['share'] and source_can_change
         if can_choose_share and plan['config'] is None and not a.share_later:
             print('Choose share to select a local catalog or view the generic template. Approve the plan to configure later.')
+        if plan.get('wolfram_candidate'):
+            print('Approving this plan authorizes installing the displayed Wolfram package under the linked terms.')
         prompt = 'Apply this installation plan? y/N/customize' + ('/share' if can_choose_share else '')
         choice=ask(prompt,'n').lower() if sys.stdin.isatty() else 'n'
         if choice in ('y','yes'):
+            plan['wolfram_reviewed']=plan.get('wolfram_candidate')
             break
         if choice in ('c','customize'):
-            customize(a,state)
+            country=customize(a,state,country)
+            explicit_ssh=True
             continue
         if choice == 'share' and can_choose_share:
             choose_share_source(a, discover_share_catalogs(a.profile))
             continue
         print('Cancelled software installation.')
         return 0
+    if store:
+        lifecycle.save_selection(store,a,plan,state)
+        plan['confirm_significant']=lambda description: a.yes or (
+            sys.stdin.isatty() and ask(description+'? y/N','n').lower() in ('y','yes'))
+        if hasattr(host,'locale_requests'):
+            if getattr(host,'log',None):
+                host.log.stage='locales'
+            try:
+                if plan.get('locale_error'):
+                    raise ValueError(plan['locale_error'])
+                plan['locale_summary']=lifecycle.apply_locales(store,host,plan['locale_plan'])
+            except (ValueError,OSError,subprocess.SubprocessError) as exc:
+                plan['locale_summary']='LIMITED '+redact(exc)
+            print('Locales:',plan['locale_summary'])
     if target:
         print('EARLY HARDWARE SETUP',flush=True)
         status,layout=host.run_preboot(preview=False,layout=a.keyboard_layout,
@@ -1023,10 +1210,6 @@ def normal_setup(a,state,host,target,firmware):
         if firmware and status is preboot.BootStatus.DEVICES_MISSING:
             preboot.report_reboot(status)
             return 1
-    if store:
-        lifecycle.save_selection(store,a,plan,state)
-        plan['confirm_significant']=lambda description: a.yes or (
-            sys.stdin.isatty() and ask(description+'? y/N','n').lower() in ('y','yes'))
     if store:
         upgrade=data.get('os_upgrade',{})
         first=upgrade.get('status')=='not-started' or (
@@ -1079,7 +1262,12 @@ def normal_setup(a,state,host,target,firmware):
             else:
                 print('Run sudo reboot when ready.')
             return 0
-    return apply(a,plan,state,host)
+    result=apply(a,plan,state,host)
+    if store and not result:
+        store.data.pop('pending_install',None)
+        store.data.pop('pending_update_existing',None)
+        store.save()
+    return result
 
 
 if __name__=='__main__':

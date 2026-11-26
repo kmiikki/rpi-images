@@ -1,0 +1,5 @@
+# Sourced by the Raspberry Pi OS Chromium launcher on shared workstations.
+# Use the keyring-free backend when the managed password-saving policy is present.
+if [ -r /etc/chromium/policies/managed/99-rpi-images-shared.json ]; then
+    CHROMIUM_FLAGS="${CHROMIUM_FLAGS:-} --password-store=basic"
+fi

@@ -240,7 +240,7 @@ class PrebootTests(unittest.TestCase):
             'settings':lambda *args:{'XKBLAYOUT':self.current_layout},
             'SYSTEM':None,'SYSTEM_KEYS':None,
         }))
-        stack.enter_context(patch.object(setup_rpi,'locale_environment',side_effect=dict))
+        stack.enter_context(patch.object(setup_rpi,'locale_environment',side_effect=lambda env, **kwargs:dict(env)))
         self.run = stack.enter_context(patch.object(preboot.subprocess, 'run'))
         self.run.side_effect=lambda command, **kwargs:setattr(self,'current_layout',command[-1])
         stack.enter_context(patch('builtins.input',return_value=''))
@@ -368,6 +368,8 @@ class PrebootTests(unittest.TestCase):
                 return 'n'
             if prompt.startswith('Profile GENERAL'):
                 return 'HOME'
+            if prompt=='Hostname':
+                return default
             if prompt.startswith('Apply this installation plan?'):
                 return 'y'
             self.fail(f'unexpected question: {prompt}')
@@ -383,7 +385,7 @@ class PrebootTests(unittest.TestCase):
                 patch.object(setup_rpi,'ask',side_effect=initial_answer) as prompt:
             self.assertEqual(setup_rpi.main([], self.host), 0)
             self.assertEqual([entry.args[0] for entry in prompt.call_args_list],
-                             ['Profile GENERAL / HOME / AALTO','Apply this installation plan? y/N/customize/share','Reboot now? y/N'])
+                             ['Profile GENERAL / HOME / AALTO','Hostname','Apply this installation plan? y/N/customize/share','Reboot now? y/N'])
         self.assertIn('Software installation is paused',output.getvalue())
         self.assertIn('INSTALLATION PLAN',output.getvalue())
         self.ensure_user.assert_not_called()
@@ -397,7 +399,7 @@ class PrebootTests(unittest.TestCase):
         with redirect_stdout(output), patch.object(sys.stdin, 'isatty', return_value=True), \
                 patch.object(setup_rpi,'ask',side_effect=answer) as prompt:
             self.assertEqual(setup_rpi.main([], self.host), 0)
-            self.assertEqual(prompt.call_count,2)
+            self.assertEqual(prompt.call_count,3)
         self.ensure_user.assert_called_once_with('alice', admin=True, passwordless=True)
         self.assertIn(['bash', str(setup_rpi.HERE / 'pre_home.sh')], self.host.calls)
         self.assertIn(['hostnamectl', '--static'], self.host.calls)
@@ -431,7 +433,7 @@ class PrebootTests(unittest.TestCase):
         before = self.firmware.stat()
         output = io.StringIO()
         with redirect_stdout(output):
-            self.assertEqual(setup_rpi.main(['--profile', 'AALTO', '--yes'], self.host), 0)
+            self.assertEqual(setup_rpi.main(['--profile', 'AALTO', '--yes', '--no-wolfram'], self.host), 0)
         self.assertIn(['bash', str(setup_rpi.HERE / 'pre_aalto.sh')], self.host.calls)
         self.assertIn('No changes needed.', output.getvalue())
         self.assertIn('No reboot required', output.getvalue())

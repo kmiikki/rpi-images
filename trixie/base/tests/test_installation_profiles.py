@@ -41,7 +41,7 @@ class ReproductionTests(unittest.TestCase):
                     self.assertEqual(norm(plan),original['plan'])
                     self.assertEqual(norm(setup.stages(a,plan)),original['stages'])
                     self.assertEqual({k:norm(getattr(a,k)) for k in original['runtime']},original['runtime'])
-                    with patch.object(os,'geteuid',return_value=0),patch.object(accounts,'ensure_user') as ensure,patch.object(setup,'install_config'),contextlib.redirect_stdout(io.StringIO()):
+                    with patch.object(os,'geteuid',return_value=0),patch.object(accounts,'ensure_user') as ensure,patch.object(setup,'install_config'),patch.object(setup.lifecycle,'install_wolfram',return_value='Fixture Wolfram'),contextlib.redirect_stdout(io.StringIO()):
                         self.assertEqual(setup.apply(a,plan,h.snapshot(),h),0)
                     ensure.assert_any_call(plan['primary'],admin=True,passwordless=True)
                     for user in plan['additional']:ensure.assert_any_call(user,admin=True)

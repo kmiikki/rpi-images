@@ -32,7 +32,9 @@ class FakeHost:
     def native_lab314(self,prefix):return False
     def exists(self,path):return str(path) in self.existing
     def environment(self,prefix):return str(prefix) in self.existing
-    def change_hostname(self,old,new):self.run(['hostnamectl','set-hostname',new])
+    def change_hostname(self,old,new,previous=None):self.run(['hostnamectl','set-hostname',new])
+    def probe(self,argv):
+        return SimpleNamespace(stdout='',stderr='',returncode=1)
     def run(self,argv,capture=False,**kwargs):
         args=[str(x) for x in argv];self.calls.append(args)
         if self.fail and any(self.fail in x for x in args):raise subprocess.CalledProcessError(1,args)
@@ -52,7 +54,7 @@ class ProfileTests(unittest.TestCase):
     def test_home_ntp_and_ssh(self):
         _,p=self.resolve('--profile','HOME')
         self.assertEqual(p['primary'],'alice');self.assertEqual(p['ntp'],'time.mikes.fi')
-        self.assertEqual(p['ssh'],'enable');self.assertTrue(p['components']['share']);self.assertEqual(p['additional'],[])
+        self.assertEqual(p['ssh'],'keep');self.assertTrue(p['components']['share']);self.assertEqual(p['additional'],[])
 
     def test_aalto_chem_defaults(self):
         _,p=self.resolve('--profile','AALTO','--school','CHEM')
@@ -129,14 +131,15 @@ class ProfileTests(unittest.TestCase):
         with patch.object(m,'ask',side_effect=lambda prompt,default:'AALTO' if prompt.startswith('Profile GENERAL') else default):m.interactive(a,h.snapshot())
         p=m.resolve(a,h.snapshot(),h);self.assertEqual(p['primary'],'alice');self.assertEqual(p['additional'],['chem-it'])
 
-    def test_standard_interactive_asks_only_profile_and_approval(self):
+    def test_standard_interactive_asks_profile_hostname_and_approval(self):
         for profile in ('GENERAL','HOME','AALTO'):
             with self.subTest(profile=profile):
-                h=FakeHost();answers=[profile,'y']
+                h=FakeHost();answers=[profile,'rpi-test','y']
                 with patch.object(sys.stdin,'isatty',return_value=True),patch.object(m,'ask',side_effect=answers) as ask, \
                         patch.object(m,'apply',return_value=0) as apply,contextlib.redirect_stdout(io.StringIO()):
                     self.assertEqual(m.main([],h),0)
-                self.assertEqual(ask.call_count,2)
+                self.assertEqual([call.args[0].split()[0] for call in ask.call_args_list],
+                                 ['Profile','Hostname','Apply'])
                 plan=apply.call_args.args[1]
                 self.assertEqual(plan['profile'],profile)
                 self.assertTrue(all(plan['components'][key] for key in ('system','conda','lab314','spyder','hardware')))
@@ -276,8 +279,9 @@ class OrchestrationTests(unittest.TestCase):
     def execute(self,argv,host=None,wolfram_exists=False):
         host=host or FakeHost();host.data['wolfram']={'engine_installed':wolfram_exists,'cli':'/mock/wolframscript' if wolfram_exists else None}
         a=m.parser().parse_args(argv+['--yes']);plan=m.resolve(a,host.snapshot(),host)
-        with patch.object(os,'geteuid',return_value=0),patch.object(accounts,'ensure_user') as ensure,patch.object(m,'install_config',return_value='DEFERRED: catalog later'),patch.object(m.shutil,'which',return_value='/mock/wolframscript' if wolfram_exists else None),patch.object(m.subprocess,'run',return_value=SimpleNamespace(returncode=1,stdout='')),contextlib.redirect_stdout(io.StringIO()):
+        with patch.object(os,'geteuid',return_value=0),patch.object(accounts,'ensure_user') as ensure,patch.object(m,'install_config',return_value='DEFERRED: catalog later'),patch.object(m.lifecycle,'install_wolfram',return_value='Fixture Wolfram') as wolfram,patch.object(m.subprocess,'run',return_value=SimpleNamespace(returncode=1,stdout='')),contextlib.redirect_stdout(io.StringIO()):
             result=m.apply(a,plan,host.snapshot(),host)
+        host.wolfram=wolfram
         return result,host,ensure
 
     def test_standard_workflow_calls_existing_scripts(self):
@@ -304,13 +308,13 @@ class OrchestrationTests(unittest.TestCase):
 
     def test_wolfram_selected_and_deselected(self):
         _,h,_=self.execute(['--profile','AALTO','--school','CHEM'])
-        self.assertTrue(any('install_optional_wolfram.sh' in ' '.join(x) for x in h.calls))
+        self.assertIs(h.wolfram.call_args.kwargs['installed'],False)
         _,h,_=self.execute(['--profile','AALTO','--school','CHEM','--no-wolfram'])
-        self.assertFalse(any('install_optional_wolfram.sh' in ' '.join(x) for x in h.calls))
+        h.wolfram.assert_not_called()
 
     def test_existing_wolfram_not_reinstalled(self):
         _,h,_=self.execute(['--profile','AALTO','--school','CHEM'],wolfram_exists=True)
-        self.assertFalse(any('install_optional_wolfram.sh' in ' '.join(x) for x in h.calls))
+        self.assertIs(h.wolfram.call_args.kwargs['installed'],True)
 
     def test_unavailable_imaging_does_not_block_base(self):
         result,h,_=self.execute(['--profile','GENERAL','--imaging','--imaging-source','/does/not/exist'])
@@ -498,6 +502,8 @@ class ShareDiscoveryTests(unittest.TestCase):
         self.assertEqual(self.plan('HOME')['share_candidates'], (first, second))
         output = io.StringIO()
         def answer(prompt, default):
+            if prompt=='Hostname':
+                return default
             if prompt.startswith('Share configuration'):
                 return '2'
             self.assertIn(f'external production JSON: {second}', output.getvalue())
@@ -509,7 +515,7 @@ class ShareDiscoveryTests(unittest.TestCase):
 
     def test_no_match_offers_generic_template_manual_path_and_deferral(self):
         manual = self.local_catalog(self.root, 'manual.json')
-        for choices, selected in ((['share','template','manual','y'], manual), (['share','later','y'], None)):
+        for choices, selected in ((['rpi-test','share','template','manual','y'], manual), (['rpi-test','share','later','y'], None)):
             with self.subTest(selected=selected):
                 output = io.StringIO()
                 with contextlib.redirect_stdout(output), patch.object(sys.stdin, 'isatty', return_value=True), \
@@ -532,7 +538,7 @@ class ShareDiscoveryTests(unittest.TestCase):
         preboot.assert_called_once_with(preview=True, layout=None, firmware=True)
         self.assertEqual(path.read_text(), '{"version": 2}')
 
-    def test_selected_path_survives_a_reboot_and_is_reviewed_on_reconciliation(self):
+    def test_selected_path_survives_a_reboot_and_changed_catalog_is_reviewed(self):
         path = self.local_catalog(self.invocation, 'rpi-share.json')
         args = m.parser().parse_args(['--profile','GENERAL','--yes'])
         store = SimpleNamespace(data={}, save=lambda: None)
@@ -541,6 +547,16 @@ class ShareDiscoveryTests(unittest.TestCase):
         self.assertEqual(store.data['pending_share']['path'], str(path))
         self.assertNotIn('production-fixture', json.dumps(store.data))
         self.host.records = store
+        with contextlib.chdir(self.package), contextlib.redirect_stdout(io.StringIO()), \
+                patch.object(sys.stdin, 'isatty', return_value=True), patch.object(m, 'ask') as prompt, \
+                patch.object(m, 'apply', return_value=0) as apply:
+            self.assertEqual(m.main([], self.host), 0)
+        prompt.assert_not_called()
+        self.assertEqual(apply.call_args.args[1]['config_path'], path)
+        config=json.loads(path.read_text())
+        config['site_notes']['description']='changed-fixture'
+        path.write_text(json.dumps(config))
+        store.data['pending_install']=True
         output = io.StringIO()
         with contextlib.chdir(self.package), contextlib.redirect_stdout(output), \
                 patch.object(sys.stdin, 'isatty', return_value=True), patch.object(m, 'ask', return_value='n') as prompt, \

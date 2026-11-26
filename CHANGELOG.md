@@ -1,6 +1,10 @@
 # Changelog
 
-## Unreleased · Raspberry Pi OS Trixie
+## v1.0.0 · Raspberry Pi OS Trixie · 2026-11-27
+
+- Add ReportLab, pypdf and Jinja2 to all lab314 profiles, with offline PDF and HTML generation in functional verification. Existing installations can reconcile missing defaults in place.
+- Keep targeted Conda repairs from reinstalling unchanged packages used only to constrain the solve.
+- Recommend a final manual reboot after successful installation in each profile.
 
 - **A01–A03** Prompt for the hostname before approval, identify accounts before password entry and resume with approved WLAN and installation settings after reboot.
 - **A04** Show Wolfram package size, free disk space and license terms before installation. Accept the Raspberry Pi package's fractional installed size and require explicit approval for package changes covered by the terms.

@@ -241,6 +241,12 @@ class ProfileTests(unittest.TestCase):
             self.assertEqual(m.main(['--profile','HOME','--plan'],host),0)
         self.assertEqual(host.calls,[])
 
+    def test_reporting_is_shown_in_each_profile_plan(self):
+        for profile in ('GENERAL','HOME','AALTO'):
+            with self.subTest(profile=profile),contextlib.redirect_stdout(io.StringIO()) as output:
+                self.assertEqual(m.main(['--profile',profile,'--plan'],FakeHost()),0)
+                self.assertIn('ReportLab, pypdf, Jinja2',output.getvalue())
+
     def test_no_tty_password_fails_before_any_change(self):
         host=FakeHost();a=m.parser().parse_args(['--profile','GENERAL','--primary-user','newuser','--recovery','create','--yes'])
         with patch.object(sys.stdin,'isatty',return_value=False),self.assertRaisesRegex(ValueError,'password'):
@@ -279,10 +285,19 @@ class OrchestrationTests(unittest.TestCase):
     def execute(self,argv,host=None,wolfram_exists=False):
         host=host or FakeHost();host.data['wolfram']={'engine_installed':wolfram_exists,'cli':'/mock/wolframscript' if wolfram_exists else None}
         a=m.parser().parse_args(argv+['--yes']);plan=m.resolve(a,host.snapshot(),host)
-        with patch.object(os,'geteuid',return_value=0),patch.object(accounts,'ensure_user') as ensure,patch.object(m,'install_config',return_value='DEFERRED: catalog later'),patch.object(m.lifecycle,'install_wolfram',return_value='Fixture Wolfram') as wolfram,patch.object(m.subprocess,'run',return_value=SimpleNamespace(returncode=1,stdout='')),contextlib.redirect_stdout(io.StringIO()):
+        with patch.object(os,'geteuid',return_value=0),patch.object(accounts,'ensure_user') as ensure,patch.object(m,'install_config',return_value='DEFERRED: catalog later'),patch.object(m.lifecycle,'install_wolfram',return_value='Fixture Wolfram') as wolfram,patch.object(m.subprocess,'run',return_value=SimpleNamespace(returncode=1,stdout='')),contextlib.redirect_stdout(io.StringIO()) as output:
             result=m.apply(a,plan,host.snapshot(),host)
         host.wolfram=wolfram
+        host.output=output.getvalue()
         return result,host,ensure
+
+    def test_each_profile_recommends_reboot_after_success_without_rebooting(self):
+        for profile in ('GENERAL','HOME','AALTO'):
+            with self.subTest(profile=profile):
+                result,host,_=self.execute(['--profile',profile])
+                self.assertEqual(result,0)
+                self.assertIn('A reboot is recommended',host.output)
+                self.assertFalse(any('reboot' in command for command in host.calls))
 
     def test_standard_workflow_calls_existing_scripts(self):
         result,h,ensure=self.execute(['--profile','GENERAL'])
@@ -333,6 +348,7 @@ class OrchestrationTests(unittest.TestCase):
     def test_core_failure_reports_and_blocks_dependents(self):
         result,h,_=self.execute(['--profile','GENERAL'],FakeHost(fail='install_conda_base.sh'))
         self.assertEqual(result,1);self.assertFalse(any('create_lab314_env.sh' in ' '.join(x) for x in h.calls))
+        self.assertNotIn('A reboot is recommended',h.output)
 
     def test_wrong_host_apply_refused(self):
         h=FakeHost();h.data['model']='development workstation';a=m.parser().parse_args(['--profile','GENERAL']);p=m.resolve(a,h.snapshot(),h)

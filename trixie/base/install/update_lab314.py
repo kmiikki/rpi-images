@@ -14,6 +14,7 @@ import re
 import subprocess
 import sys
 import tempfile
+from urllib.parse import urlsplit
 sys.path.insert(0,str(Path(__file__).resolve().parent))
 from packaging.version import InvalidVersion, Version
 from lab314_policy import (Requirement, canonical, missing_scientific_defaults, opencv_specs,
@@ -47,6 +48,28 @@ def validate_pip_plan(report, conda, frozen, specs=None):
     return planned
 
 
+def pip_additions(report, installed, requested):
+    """Use only the exact, hashed wheels selected by the add-only solve."""
+    wheel_hosts = {'files.pythonhosted.org', 'www.piwheels.org', 'archive1.piwheels.org'}
+    found = set()
+    wheels = []
+    for item in report.get('install', []):
+        name = canonical(item['metadata']['name'])
+        if name in installed or name in found:
+            raise ValueError('Adding missing defaults would replace an installed package: '+name)
+        download = item['download_info']
+        url = urlsplit(download['url'])
+        digest = download.get('archive_info', {}).get('hashes', {}).get('sha256', '')
+        if (url.scheme != 'https' or url.netloc not in wheel_hosts or not url.path.endswith('.whl')
+                or url.fragment or not re.fullmatch(r'[0-9a-f]{64}', digest)):
+            raise ValueError('Missing approved wheel URL or SHA-256 in pip plan: '+name)
+        found.add(name)
+        wheels.append(f"{name} @ {download['url']} --hash=sha256:{digest}")
+    if missing := set(requested)-found:
+        raise ValueError('pip plan does not add the required packages: '+', '.join(sorted(missing)))
+    return wheels
+
+
 def validate_conda_plan(plan, conda, pip):
     actions=plan.get('actions',{})
     linked={i['name'] for i in actions.get('LINK',[])}
@@ -69,6 +92,17 @@ def conda_transaction(plan):
                  for item in actions.get(action,[])}
         for action in ('UNLINK','LINK')
     }
+
+
+def limit_conda_reinstalls(plan, requested):
+    """Remove unchanged builds selected only to constrain the repair solve."""
+    actions = plan.get('actions', {})
+    transaction = conda_transaction(plan)
+    before, after = transaction['UNLINK'], transaction['LINK']
+    unchanged = {name for name in before.keys()-requested if before[name]==after.get(name)}
+    for event in ('UNLINK', 'LINK', 'FETCH'):
+        if event in actions:
+            actions[event] = [item for item in actions[event] if item['name'] not in unchanged]
 
 
 def validate_additions(plan, installed, requested):
@@ -222,6 +256,8 @@ def main():
     args=parser.parse_args();prefix=args.prefix
     if args.repair and not args.package:
         raise ValueError('--repair requires at least one --package')
+    if args.add_defaults and args.no_deps:
+        raise ValueError('--add-defaults requires dependency resolution')
     if args.ide_prefix:
         maintain_ide(args);return
     if prefix!=prefix.resolve() or prefix.resolve()!=Path(sys.prefix).resolve() or prefix in (Path('/opt/rpi'),Path('/opt/conda'),Path('/usr'),Path('/')):
@@ -246,6 +282,7 @@ def main():
     if native and 'LAB314_SPYDER_PYTHON' in os.environ:
         raise ValueError('The integrated Conda environment maintains its own Spyder kernel; use the external IDE independently.')
     specs=[] if native else requirements()
+    declared={canonical(name) for name in policy()['pip']}
     if args.add_defaults:
         targets=defaults
         print('Missing Scientific Python defaults: '+', '.join(defaults),flush=True)
@@ -254,7 +291,10 @@ def main():
     elif args.initialize:
         if pip:raise ValueError('--initialize requires a new prefix without pip-owned distributions')
         targets=[str(Requirement(s)) for s in specs if canonical(Requirement(s).name) not in conda and canonical(Requirement(s).name) not in frozen]
-    elif args.all:targets=list(conda)+list(pip)+specs
+    elif args.all:
+        targets=list(conda)+list(pip)+specs
+        if native:
+            targets.extend(missing_scientific_defaults(prefix))
     else:targets=args.package
     ctargets=[];ptargets=[]
     for text in targets:
@@ -263,15 +303,18 @@ def main():
         name=canonical(match[1]);cname=next((n for n in conda if canonical(n)==name),None)
         if cname:
             ctargets.append(cname+match[2]);continue
-        if add_only:
+        if add_only and native:
             ctargets.append(text);continue
-        if args.repair and native and name in {'spyder','opencv',*(canonical(n) for n in policy()['pip'] if n!='opencv-python')} and name not in pip and name not in frozen:
+        if (native and (args.all or args.repair) and name in {'spyder','opencv',*(declared-{'opencv-python'})}
+                and name not in pip and name not in frozen):
             ctargets.append(name+match[2]);continue
         req=Requirement(text)
         if name in frozen:raise ValueError('Use the owning Conda package name for '+name)
-        if name in pip or args.initialize or (args.all and name in {canonical(Requirement(s).name) for s in specs}):ptargets.append(str(req))
+        if name in pip or args.initialize or (not native and (add_only or args.all or args.repair) and name in declared):
+            ptargets.append(str(req))
         else:raise ValueError('Unknown ownership: '+name)
     if ctargets and args.no_deps:raise ValueError('--no-deps is only supported for pip updates')
+    repair_targets = {re.split(r'[<>=!]', item, maxsplit=1)[0] for item in ctargets} if args.repair else set()
     opencv_upgrade = native and args.package and any(item=='opencv' for item in ctargets)
     if opencv_upgrade:
         ctargets = opencv_migration_targets(ctargets,conda)
@@ -308,6 +351,8 @@ def main():
             plan=json.loads(solved)
             if plan.get('success') is False:
                 raise ValueError('Conda solver rejected update: '+str(plan))
+            if args.repair:
+                limit_conda_reinstalls(plan,repair_targets)
             validate_conda_plan(plan,conda,pip)
             if add_only:
                 validate_additions(plan,conda.keys() | pip.keys() | frozen.keys(),
@@ -344,13 +389,22 @@ def main():
                 conda,pip,frozen=ownership(prefix)
         if ptargets:
             env=dict(os.environ,PIP_NO_CACHE_DIR='1',TMPDIR=str(work))
-            constraints.write_text('\n'.join(specs+reverse_constraints(ptargets)+[n+'=='+v for n,v in frozen.items()])+'\n')
-            subprocess.run(pip_plan_args(sys.executable,ptargets,constraints,report,args.no_deps,args.initialize,args.repair),env=env,check=True)
+            installed = {canonical(d.metadata['Name']):d.version for d in md.distributions()} if args.add_defaults else frozen
+            constraints.write_text('\n'.join(specs+reverse_constraints(ptargets)+[n+'=='+v for n,v in installed.items()])+'\n')
+            subprocess.run(pip_plan_args(sys.executable,ptargets,constraints,report,args.no_deps,
+                                         args.initialize or args.add_defaults,args.repair),env=env,check=True)
             plan=json.loads(report.read_text());exact=validate_pip_plan(plan,conda,frozen,specs)
+            if args.add_defaults:
+                wheels=pip_additions(plan,installed,defaults)
             print('PIP PLAN',exact,flush=True)
             if args.apply:
                 (args.record_dir/'pip-plan.json').write_text(json.dumps(plan,indent=2))
-                if exact:
+                if args.add_defaults:
+                    wheel_file=work/'approved-wheels.txt'
+                    wheel_file.write_text('\n'.join(wheels)+'\n')
+                    subprocess.run([sys.executable,'-IB','-m','pip','install','--no-deps','--only-binary=:all:',
+                                    '--no-index','--require-hashes','-r',str(wheel_file)],env=env,check=True)
+                elif exact:
                     config=policy()
                     subprocess.run([sys.executable,'-IB','-m','pip','install','--no-deps','--only-binary=:all:',
                                     '--index-url',config['pip_index'],'--extra-index-url',config['pip_extra_index'],

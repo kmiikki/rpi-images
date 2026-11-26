@@ -923,6 +923,7 @@ def apply(a,plan,state,host):
     if any(status in ('FAIL','BLOCKED') for _,status,_ in results):
         print('Retry: review the first failed stage, use setup-rpi.sh --manage --action diagnose, then rerun setup after correction. Preserve incomplete prefixes.')
         return 1
+    print('A reboot is recommended after successful installation. Run sudo reboot when ready.')
     return 0
 
 
@@ -982,6 +983,8 @@ def show_plan(a, plan, state, boot_status, host):
                        ('Scientific Python 3.14','lab314'),('Spyder IDE','spyder-ide' if a.ide_prefix else 'spyder-desktop'),
                        ('Raspberry Pi Python 3.13','hardware')):
         print(f'  {label:<24} {label_action(key)}')
+    if plan['components']['lab314']:
+        print('  Scientific reporting     ReportLab, pypdf, Jinja2 (offline PDF and HTML)')
     print('\nOptional components')
     for label, key in (('Wolfram Engine','wolfram'),('Scientific Imaging','imaging'),('rpi-share','share')):
         print(f'  {label:<24} {label_action(key)}')

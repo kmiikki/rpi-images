@@ -56,6 +56,12 @@ them in one reboot after the upgrade. It saves the approved profile, hostname,
 WLAN country and component choices before the early setup, then pauses
 before installing scientific software. Answer `y` to reboot from setup, or reboot manually
 with `sudo reboot`. Then run the same `sudo bash setup-rpi.sh` command again.
+
+After successful installation, setup recommends a final manual reboot for
+GENERAL, HOME and AALTO. This recommendation does not trigger a restart.
+All three profiles include
+[Scientific Reporting and Document Generation](scientific-reporting.md) in
+the existing lab314 environment.
 The installer verifies the running kernel, page size and live I²C and SPI devices.
 An approved WLAN country that matches the stored and active settings is reused
 automatically. Changed settings or package selections can require review again.

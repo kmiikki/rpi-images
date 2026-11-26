@@ -79,6 +79,9 @@ See the [base installation guide](trixie/base/README.md#installation-profiles)
 and [unified setup guide](trixie/base/docs/unified-setup.md) for prerequisites,
 optional components, maintenance and recovery.
 
+See [Scientific Reporting and Document Generation](trixie/base/docs/scientific-reporting.md)
+for offline PDF and HTML reports in lab314.
+
 See the [changelog](CHANGELOG.md) and
-[Pi 5 pre-release acceptance guide](trixie/base/docs/pre-release-acceptance-20261126.md)
-for the current correction round.
+[v1.0.0 release notes](trixie/base/docs/release-notes-v1.0.0.md)
+for changes, acceptance results and known limitations.

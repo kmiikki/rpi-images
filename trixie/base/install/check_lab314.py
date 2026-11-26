@@ -18,14 +18,22 @@ parser.add_argument('--prefix', type=Path, required=True)
 parser.add_argument('--functional', action='store_true')
 parser.add_argument('--require-spyder', action='store_true')
 parser.add_argument('--require-opencv-target', action='store_true', help='verify the current Conda OpenCV and HDF5 versions')
-parser.add_argument('--kernel-only', action='store_true', help='show native dependency and kernel startup diagnostics')
+mode = parser.add_mutually_exclusive_group()
+mode.add_argument('--kernel-only', action='store_true', help='show native dependency and kernel startup diagnostics')
+mode.add_argument('--reporting-only', action='store_true', help='run the headless PDF and HTML reporting checks')
 args = parser.parse_args()
+if args.snapshot and args.reporting_only:
+    parser.error('--reporting-only requires the current reporting packages')
 contract = json.loads(args.contract.read_text()) if args.snapshot else None
 errors = []
 if Path(sys.prefix).resolve() != args.prefix.resolve():
     errors.append(f'prefix {sys.prefix} != {args.prefix}')
 if errors:sys.exit('\n'.join(errors))
 sys.path.insert(0,str(Path(__file__).resolve().parent))
+if args.reporting_only:
+    from check_lab314_reporting import main as check_reporting
+    check_reporting()
+    sys.exit(0)
 from lab314_kernel import (KernelProbeError, diagnose_dependencies, kernel_environment, large_arm64_pages,
                            probe_spyder_kernel, run_native_check)
 
@@ -93,6 +101,8 @@ subprocess.run([sys.executable, '-B', '-m', 'pip', 'check'], check=True)
 print('PASS', 'exact snapshot' if args.snapshot else 'compatible requirements', 'Python, prefix, isolation')
 if not args.functional:
     sys.exit(0)
+if not args.snapshot:
+    subprocess.run([sys.executable, '-IB', str(Path(__file__).with_name('check_lab314_reporting.py'))], check=True)
 
 # Small deterministic workloads. Temporary output follows the caller's TMPDIR.
 with tempfile.TemporaryDirectory(prefix='lab314-check-') as tmp:

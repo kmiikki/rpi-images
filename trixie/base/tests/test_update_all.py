@@ -78,6 +78,14 @@ class UpdateAllTests(unittest.TestCase):
         self.assertNotIn('spyder',required)
         self.assertNotIn('python3-picamera2',required)
         self.assertNotIn('wolfram-engine',required)
+
+    def test_update_all_requests_reporting_for_the_existing_native_prefix(self):
+        self.host.native_lab314=lambda path: True
+        self.host.exists=lambda path: True
+        with patch.object(update,'conda_plan') as plan:
+            update.conda_plans(self.host,self.store,{'lab314':True,'spyder':True})
+        self.assertEqual(plan.call_args.args[2:4],('lab314','/opt/lab314'))
+        self.assertLessEqual({'reportlab','pypdf','jinja2','spyder==6.1.8'},set(plan.call_args.args[-1]))
         self.assertIn('python3-picamera2',update.required_apt({'hardware':True}))
 
     def test_apt_update_disables_system_hooks_and_keeps_lists_private(self):

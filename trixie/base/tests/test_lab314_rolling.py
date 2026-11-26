@@ -19,6 +19,7 @@ import update_lab314 as update
 ORIGINAL_SPYDER=policy.spyder_requirement
 KERNEL='spyder-kernels>=3.0.3,<3.1.0'
 ADDED_DEFAULTS={
+    'reportlab':'5.1.0', 'pypdf':'7.2.0',
     'shap':'0.51.0', 'pywavelets':'1.9.0', 'optuna':'4.8.0', 'plotly':'6.8.0',
     'hypothesis':'6.150.0', 'polars':'1.41.0', 'xgboost':'3.2.0',
 }
@@ -62,6 +63,19 @@ class RollingTests(unittest.TestCase):
         for record in [{'name':'python','version':'3.15.0'},{'name':'numpy','version':'2.5.5'}]:
             with self.assertRaises(ValueError):update.validate_conda_plan({'actions':{'LINK':[record]}},known,{'numpy':'2.5.4'})
         with self.assertRaises(ValueError):update.validate_conda_plan({'actions':{'UNLINK':[{'name':'pip','version':'26.2.2'}]}},known,{})
+
+    def test_targeted_repair_drops_reinstalls_of_unchanged_solver_constraints(self):
+        requested=dict(name='reportlab',version='5.1.2',build_string='a')
+        constraint=dict(name='python',version='3.14.10',build_string='b')
+        dependency=dict(name='pycairo',version='1.29.1',build_string='c')
+        updated=dict(dependency,version='1.29.2',build_string='d')
+        plan={'actions':{'UNLINK':[requested,constraint,dependency],
+                         'LINK':[requested,constraint,updated],
+                         'FETCH':[requested,constraint,updated]}}
+        update.limit_conda_reinstalls(plan,{'reportlab'})
+        self.assertEqual(plan['actions'],{'UNLINK':[requested,dependency],
+                                         'LINK':[requested,updated],
+                                         'FETCH':[requested,updated]})
 
     def test_conda_new_dependency_files_are_checked_before_link(self):
         update.validate_conda_plan({'actions':{'LINK':[{'name':'new-native-dependency','version':'1'}]}},{'python':'3.14.10'},{})
@@ -277,7 +291,54 @@ fi
                          [f'{name}: installed None' for name in ADDED_DEFAULTS])
         for include_spyder in (False,True):
             self.assertLessEqual(set(ADDED_DEFAULTS),set(policy.native_conda_specs(include_spyder)))
+            self.assertIn('jinja2',policy.native_conda_specs(include_spyder))
         self.assertEqual(policy.policy()['pip']['pywavelets'],'pywt')
+
+    def test_legacy_default_reconciliation_reuses_existing_dependencies(self):
+        report = {'install': [
+            {'metadata': {'name': name, 'version': '1'},
+             'download_info': {'url': f'https://files.pythonhosted.org/packages/{name}-1-py3-none-any.whl',
+                               'archive_info': {'hashes': {'sha256': 'a'*64}}}}
+            for name in ('reportlab', 'pypdf')
+        ]}
+        inventory=({'python':'3.14.10'}, {'jinja2':'3.1.6','pillow':'13.0.0'}, {})
+        records=self.root/'records'
+        argv=['update','--prefix',str(self.prefix),'--add-defaults','--apply','--record-dir',str(records)]
+        def run(command, **kwargs):
+            if '--report' in command:
+                Path(command[command.index('--report')+1]).write_text(json.dumps(report))
+                constraints=Path(command[command.index('--constraint')+1]).read_text().splitlines()
+                self.assertIn('pillow==13.0.0',constraints)
+                self.assertIn('jinja2==3.1.6',constraints)
+                self.assertNotIn('--upgrade',command)
+            if '--require-hashes' in command:
+                wheels=Path(command[-1]).read_text().splitlines()
+                self.assertEqual(len(wheels),2)
+                self.assertTrue(all(url.endswith('--hash=sha256:'+'a'*64) for url in wheels))
+                self.assertIn('--no-index',command)
+        distributions=[type('Dist', (), {'metadata': {'Name': name}, 'version': version})
+                       for name,version in inventory[1].items()]
+        with (patch.object(sys,'prefix',str(self.prefix)),patch.object(sys,'argv',argv),
+              patch.object(update.platform,'python_version',return_value='3.14.10'),
+              patch.object(update,'missing_scientific_defaults',return_value=['reportlab','pypdf']),
+              patch.object(update,'ownership',return_value=inventory),
+              patch.object(update.md,'distributions',return_value=distributions),
+              patch.object(update,'reverse_constraints',return_value=[]),
+              patch.object(update.subprocess,'check_output',return_value=''),
+              patch.object(update.subprocess,'run',side_effect=run) as commands,
+              contextlib.redirect_stdout(io.StringIO())):
+            update.main()
+        install = commands.call_args_list[1].args[0]
+        self.assertIn('--require-hashes',install)
+        self.assertIn('--no-deps',install)
+        self.assertIn('--functional',commands.call_args.args[0])
+        with self.assertRaisesRegex(ValueError,'replace an installed package'):
+            update.pip_additions(report, {'reportlab'}, ['reportlab','pypdf'])
+        with self.assertRaisesRegex(ValueError,'required packages: jinja2'):
+            update.pip_additions(report, set(), ['reportlab','pypdf','jinja2'])
+        report['install'][0]['download_info']['archive_info']['hashes'].clear()
+        with self.assertRaisesRegex(ValueError,'SHA-256'):
+            update.pip_additions(report, set(), ['reportlab','pypdf'])
 
     def test_default_reconciliation_without_missing_packages_does_no_package_work(self):
         records=self.root/'record'

@@ -337,8 +337,10 @@ def conda_plan(host, store, component, name, specs):
 
 
 def conda_plans(host,store,selected):
-    targets=json.loads((BASE/'config/lab314/requirements.json').read_text())['native']
-    specs=['python=3.14','python-gil',f"opencv={targets['opencv']}=qt6*",f"hdf5={targets['hdf5']}",'h5py','netcdf4']
+    config=json.loads((BASE/'config/lab314/requirements.json').read_text())
+    targets=config['native']
+    specs=[*config['conda'],'python-gil',f"opencv={targets['opencv']}=qt6*",f"hdf5={targets['hdf5']}"]
+    specs.extend(name.lower() for name in config['pip'] if name!='opencv-python')
     data=store.data
     result=[]
     if selected.get('lab314'):

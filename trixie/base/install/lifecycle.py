@@ -1295,11 +1295,12 @@ def diagnostic_report(store,host):
             print('Preserve the prefix. Use Verify or an explicit quarantine before installing at the original path.')
         else:
             if host.native_lab314(prefix) and host.exists(prefix/'bin/spyder'):
-                try:
-                    with inspection(host):
-                        host.run([prefix/'bin/python','-IB',HERE/'check_lab314.py','--prefix',prefix,'--kernel-only'])
-                except (OSError,ValueError,subprocess.SubprocessError) as error:
-                    print(f'FAIL Spyder kernel diagnostic: {error}')
+                for option, label in (('--kernel-only','Spyder kernel'), ('--reporting-only','scientific reporting')):
+                    try:
+                        with inspection(host):
+                            host.run([prefix/'bin/python','-IB',HERE/'check_lab314.py','--prefix',prefix,option])
+                    except (OSError,ValueError,subprocess.SubprocessError) as error:
+                        print(f'FAIL {label} diagnostic: {error}')
             else:
                 verify(store,host,'lab314')
     logs=store.directory/'logs'

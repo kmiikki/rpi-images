@@ -11,6 +11,10 @@ current OpenCV 5.1.0 Qt6, HDF5 1.14.6 and Spyder 6.1.8 targets are in
 for `h5py`, `netCDF4` and their native libraries. Spyder declares the supported
 range for `spyder-kernels`, which constrains IPython and ipykernel.
 
+[Scientific Reporting and Document Generation](scientific-reporting.md) is
+part of the maintained manifest. ReportLab, pypdf and Jinja2 use the same
+Conda-forge resolution as other direct requirements on native lab314.
+
 Older lab314 environments retain their original ownership. They use Conda for
 Python and native dependencies and PyPI/piwheels for the scientific wheels.
 When maintained with their legacy IDE workflow, the kernel constraint comes
@@ -38,7 +42,11 @@ bash verify_rpi_lab314.sh
 ```
 
 For ordinary installation, use the unified installer. It keeps valid existing
-prefixes unless you explicitly request an update.
+prefixes and reconciles missing manifest defaults. This operation rejects a
+plan that would replace installed packages. On a historical mixed prefix,
+missing wheel-managed defaults use the configured wheel indexes. The add-only
+operation verifies the exact wheel URLs and SHA-256 values from the pip plan.
+Use the separately reviewed update if installed dependencies must change.
 
 ### Upgrade OpenCV 5.0.0 to 5.1.0
 
@@ -103,7 +111,8 @@ Normal verification checks Python series, required distributions, dynamic
 Spyder compatibility, imports, isolation, GUI-capable OpenCV and `pip check`.
 The native layout also checks an offscreen HighGUI window, Qt/PyQtWebEngine
 loading and an actual IPython kernel. The existing scientific/geometry/file/video
-functional checks remain. Legacy wheel builds retain their font checks.
+functional checks remain. Normal functional verification includes headless
+PDF and HTML generation. Legacy wheel builds retain their font checks.
 The new update command runs normal functional verification after applying an
 update. Display/Spyder GUI interaction still needs the existing manual acceptance.
 
